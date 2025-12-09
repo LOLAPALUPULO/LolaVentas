@@ -1,97 +1,110 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AuthScreen from './components/AuthScreen';
 import AdminDashboard from './components/AdminDashboard';
-import SalesPOS from './components/SalesPOS';
-import { UserRole } from './types';
-import { ADMIN_USER, SALES_USER } from './constants';
-import { getActiveFair } from './services/firebaseService';
-import { Fair } from './types';
+import SalesTerminal from './components/SalesTerminal';
+import { UserLevel, FeriaConfig } from './types';
+import { getFeriaConfig } from './services/firebaseService';
+import Button from './components/Button';
+import { USERS } from './constants'; // Import USERS for validation
 
 const App: React.FC = () => {
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [activeFair, setActiveFair] = useState<Fair | null>(null);
-  const [isLoadingFair, setIsLoadingFair] = useState<boolean>(true);
+  const [currentUserLevel, setCurrentUserLevel] = useState<UserLevel | null>(null);
+  const [feriaConfig, setFeriaConfig] = useState<FeriaConfig | null>(null);
+  const [loadingInitialConfig, setLoadingInitialConfig] = useState(true);
+  const [loginError, setLoginError] = useState<string | null>(null); // New state for login errors
 
+  // Load feria config on initial app load
   useEffect(() => {
-    const fetchActiveFair = async () => {
-      setIsLoadingFair(true);
+    const loadInitialConfig = async () => {
+      setLoadingInitialConfig(true);
       try {
-        const fair = await getActiveFair();
-        setActiveFair(fair);
+        const config = await getFeriaConfig();
+        setFeriaConfig(config);
       } catch (error) {
-        console.error("Error fetching active fair:", error);
+        console.error("Error loading initial feria config:", error);
       } finally {
-        setIsLoadingFair(false);
+        setLoadingInitialConfig(false);
       }
     };
-    fetchActiveFair();
+    loadInitialConfig();
   }, []);
 
-  const handleLogin = (username: string) => {
-    setLoggedInUser(username);
-    if (username === ADMIN_USER) {
-      setUserRole(UserRole.Admin);
-    } else if (username === SALES_USER) {
-      setUserRole(UserRole.Sales);
+  const handleLoginAttempt = useCallback((level: UserLevel, username: string) => {
+    setLoginError(null); // Clear previous errors
+    if (level === UserLevel.ADMIN && username === USERS.ADMIN_USER) {
+      setCurrentUserLevel(level);
+    } else if (level === UserLevel.VENTA && username === USERS.VENTA_USER) {
+      setCurrentUserLevel(level);
+    } else {
+      setLoginError('Usuario incorrecto. Intente nuevamente.');
     }
-  };
+  }, []);
 
-  const handleLogout = () => {
-    setLoggedInUser(null);
-    setUserRole(null);
-  };
+  const handleFeriaConfigured = useCallback((config: FeriaConfig | null) => {
+    setFeriaConfig(config);
+  }, []);
 
-  const handleFairUpdate = (fair: Fair | null) => {
-    setActiveFair(fair);
-  };
+  const handleLogout = useCallback(() => {
+    setCurrentUserLevel(null);
+    setLoginError(null); // Clear any login errors on logout
+  }, []);
 
-  if (loggedInUser === null) {
+  if (loadingInitialConfig) {
     return (
-      <AuthScreen onLogin={handleLogin} />
-    );
-  }
-
-  if (isLoadingFair) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center text-gray-700">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-4"></div>
-        <p className="text-xl">Cargando datos de la feria...</p>
+      <div className="min-h-screen flex items-center justify-center bg-emerald-50 text-gray-800">
+        <div className="animate-spin rounded-full h-20 w-20 border-t-4 border-b-4 border-teal-500"></div>
+        <p className="ml-6 text-2xl">Cargando aplicación...</p>
       </div>
     );
   }
 
-  return (
-    <div className="w-full">
-      <header className="mb-6 py-4 bg-blue-600 text-white rounded-t-lg shadow-md flex justify-between items-center px-6">
-        <h1 className="text-4xl font-pitched-battle tracking-wide">LOLA VENTA</h1>
-        <div className="flex items-center space-x-4">
-          <span className="text-lg">Usuario: {loggedInUser}</span>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition duration-200"
-          >
-            Cerrar Sesión
-          </button>
-        </div>
-      </header>
+  // If no user level selected, show auth screen
+  if (!currentUserLevel) {
+    return (
+      <AuthScreen
+        onLoginAttempt={handleLoginAttempt}
+        loginError={loginError} // Pass login error
+      />
+    );
+  }
 
-      <main className="min-h-[70vh]">
-        {userRole === UserRole.Admin && (
-          <AdminDashboard activeFair={activeFair} onFairUpdate={handleFairUpdate} />
-        )}
-        {userRole === UserRole.Sales && activeFair && (
-          <SalesPOS activeFair={activeFair} onFairUpdate={handleFairUpdate} />
-        )}
-        {userRole === UserRole.Sales && !activeFair && (
-          <div className="text-center text-red-600 text-2xl mt-12 p-6 bg-red-100 rounded-lg shadow-inner">
-            <p>¡Atención! No hay una feria activa configurada.</p>
-            <p className="text-lg mt-2">Por favor, espera a que el administrador configure una feria.</p>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+  // If admin, show admin dashboard
+  if (currentUserLevel === UserLevel.ADMIN) {
+    return (
+      <AdminDashboard
+        onFeriaConfigured={handleFeriaConfigured}
+        currentFeriaConfig={feriaConfig}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  // If sales, check if feria is configured
+  if (currentUserLevel === UserLevel.VENTA) {
+    if (feriaConfig) {
+      return <SalesTerminal feriaConfig={feriaConfig} onLogout={handleLogout} />;
+    } else {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-red-100 text-red-800 p-4 text-center">
+          <h1 className="text-5xl md:text-7xl font-extrabold mb-6 text-red-700 font-pitched-battle">LolaVentas App</h1>
+          <p className="text-2xl mb-8">
+            La Feria aún no ha sido configurada por un administrador.
+            <br />Por favor, pida a un administrador que configure la feria primero.
+          </p>
+          <Button
+            onClick={handleLogout} // Allow user to go back to login screen
+            variant="danger"
+            size="lg"
+            className="bg-red-600 hover:bg-red-700 text-white"
+          >
+            Volver a Selección de Nivel
+          </Button>
+        </div>
+      );
+    }
+  }
+
+  return null; // Should not reach here
 };
 
 export default App;
