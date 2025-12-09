@@ -1,5 +1,0 @@
-{
-  "name": "LolaVentas App",
-  "description": "An application for event sales registration, calculating quantities and values, with Firebase integration and user roles.",
-  "requestFramePermissions": []
-}
