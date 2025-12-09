@@ -1,0 +1,5 @@
+{
+  "name": "LolaVentas 2",
+  "description": "Aplicación para el registro de ventas de eventos (Feria) con cálculo de cantidades y valores finales/parciales.",
+  "requestFramePermissions": []
+}
