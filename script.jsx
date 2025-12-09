@@ -13,7 +13,7 @@ const FIRESTORE_COLLECTIONS = {
 
 // --- Types (simplified for JavaScript runtime, JSDoc for documentation) ---
 /**
- * @typedef {('admin'|'sales')} UserRole
+ * @typedef {('admin'|'sales')} UserRoleEnum
  */
 const UserRole = {
   Admin: 'admin',
@@ -39,7 +39,7 @@ const UserRole = {
  */
 
 /**
- * @typedef {('Pinta'|'Litro')} UnitType
+ * @typedef {('Pinta'|'Litro')} UnitTypeEnum
  */
 const UnitType = {
   Pinta: 'Pinta',
@@ -47,7 +47,7 @@ const UnitType = {
 };
 
 /**
- * @typedef {('$ Digital'|'$ Billete')} PaymentType
+ * @typedef {('$ Digital'|'$ Billete')} PaymentTypeEnum
  */
 const PaymentType = {
   Digital: '$ Digital',
@@ -59,19 +59,18 @@ const PaymentType = {
  * @property {string} [id] - Optional for new sales before saving
  * @property {string} fairId
  * @property {FirebaseTimestamp} saleDate
- * @property {UnitType} unitType
+ * @property {UnitTypeEnum} unitType
  * @property {number} quantity
  * @property {number} totalAmount
- * @property {PaymentType} paymentType
+ * @property {PaymentTypeEnum} paymentType
  * @property {string} userName
  */
 
 
 // --- Firebase Service ---
-// Declare firebase globally as it's loaded via CDN script
-declare const firebase: any;
+// Access firebase from window, as it's loaded via CDN script
+const firebase = window.firebase;
 
-// Initialize Firebase (replace with your project's config)
 const firebaseConfig = {
   projectId: 'lolaventas-5a9fa',
 };
@@ -246,7 +245,7 @@ const playBeep = (frequency, duration = 100) => {
 
 /**
  * Generates a PDF report from fair sales data.
- * Assumes jspdf and html2canvas are loaded globally.
+ * Assumes jspdf is loaded globally.
  * @param {ReportData} data
  */
 const generateReportPdf = (data) => {
