@@ -162,6 +162,7 @@ const addSale = async (saleData) => {
   return { id: doc.id, ...doc.data() };
 };
 
+
 /**
  * Retrieves all sales for a given fair ID.
  * @param {string} fairId
@@ -182,6 +183,34 @@ const getSalesForFair = async (fairId) => {
  */
 const closeFairSales = async (fairId) => {
     await db.collection(FIRESTORE_COLLECTIONS.FAIRS).doc(fairId).update({ isActive: false });
+};
+
+/**
+ * Reactivates a historical fair, deactivating any other currently active fair.
+ * @param {string} fairId - The ID of the fair to reactivate.
+ * @returns {Promise<Fair>} The newly activated fair object.
+ */
+const reactivateFair = async (fairId) => {
+  const batch = db.batch();
+
+  // 1. Deactivate any currently active fair
+  const activeFairQuery = await db.collection(FIRESTORE_COLLECTIONS.FAIRS).where('isActive', '==', true).get();
+  activeFairQuery.forEach((doc) => {
+    batch.update(doc.ref, { isActive: false });
+  });
+
+  // 2. Activate the specified historical fair
+  const fairToReactivateRef = db.collection(FIRESTORE_COLLECTIONS.FAIRS).doc(fairId);
+  batch.update(fairToReactivateRef, { isActive: true });
+
+  await batch.commit();
+
+  // 3. Fetch and return the newly active fair data
+  const doc = await fairToReactivateRef.get();
+  if (!doc.exists) {
+    throw new Error('Fair not found after reactivation.');
+  }
+  return { id: doc.id, ...doc.data() };
 };
 
 
@@ -822,12 +851,16 @@ const AdminDashboard = ({ activeFair, onFairUpdate }) => {
   const [historicalSales, setHistoricalSales] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLoadingSales, setIsLoadingSales] = useState(false);
+  const [isReactivating, setIsReactivating] = useState(false);
+  const [reactivateMessage, setReactivateMessage] = useState({ text: '', type: '' });
+
 
   const fetchFairHistory = useCallback(async () => {
     setIsLoadingHistory(true);
     try {
       const fairs = await getFairs();
-      setFairHistory(fairs.filter(f => f.id !== activeFair?.id)); // Exclude active fair from history
+      // Filter out the active fair from the history list if it exists
+      setFairHistory(fairs.filter(f => f.id !== activeFair?.id && !f.isActive));
     } catch (error) {
       console.error("Error fetching fair history:", error);
     } finally {
@@ -837,6 +870,7 @@ const AdminDashboard = ({ activeFair, onFairUpdate }) => {
 
   useEffect(() => {
     fetchFairHistory();
+    setReactivateMessage({text: '', type: ''}); // Clear message when active fair changes
   }, [fetchFairHistory, activeFair]); // Re-fetch history if activeFair changes
 
   const handleSelectHistoricalFair = useCallback(async (fair) => {
@@ -856,6 +890,27 @@ const AdminDashboard = ({ activeFair, onFairUpdate }) => {
     setSelectedHistoricalFair(null);
     setHistoricalSales([]);
   }, []);
+
+  const handleReactivateFair = async (fairId) => {
+    if (!window.confirm('¿Estás seguro de que quieres reactivar esta feria? Esto desactivará cualquier otra feria activa.')) {
+      return;
+    }
+    setIsReactivating(true);
+    setReactivateMessage({ text: '', type: '' });
+    try {
+      const newlyActiveFair = await reactivateFair(fairId);
+      onFairUpdate(newlyActiveFair); // Update the active fair in App.jsx
+      clearSelectedHistoricalFair(); // Clear history view
+      // No need to fetchFairHistory here explicitly, useEffect for activeFair will handle it
+      setReactivateMessage({ text: 'Feria reactivada con éxito. Es la nueva feria activa.', type: 'success' });
+    } catch (error) {
+      console.error("Error al reactivar la feria:", error);
+      setReactivateMessage({ text: `Error al reactivar la feria: ${error.message}`, type: 'error' });
+    } finally {
+      setIsReactivating(false);
+      setTimeout(() => setReactivateMessage({ text: '', type: '' }), 5000); // Clear message after 5 seconds
+    }
+  };
 
   return (
     <div className="flex flex-col">
@@ -877,6 +932,14 @@ const AdminDashboard = ({ activeFair, onFairUpdate }) => {
           </button>
         ))}
       </nav>
+
+      {reactivateMessage.text && (
+          <div
+            className={`p-3 mb-6 rounded-md text-lg font-medium ${reactivateMessage.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+          >
+            {reactivateMessage.text}
+          </div>
+        )}
 
       <div className="bg-white p-6 rounded-lg shadow-md min-h-[50vh]">
         {currentView === AdminView.Config && (
@@ -930,10 +993,19 @@ const AdminDashboard = ({ activeFair, onFairUpdate }) => {
                 <h3 className="text-2xl font-pitched-battle text-gray-800 mb-4">Reporte de Feria Histórica: {selectedHistoricalFair.name}</h3>
                 <button
                   onClick={clearSelectedHistoricalFair}
-                  className="mb-4 px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg transition duration-200"
+                  className="mb-4 mr-4 px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg transition duration-200"
                 >
                   &larr; Volver al Historial
                 </button>
+                {!selectedHistoricalFair.isActive && ( // Only show reactivate button for inactive fairs
+                  <button
+                    onClick={() => handleReactivateFair(selectedHistoricalFair.id)}
+                    disabled={isReactivating}
+                    className="mb-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isReactivating ? 'Reactivando...' : 'Reactivar Feria'}
+                  </button>
+                )}
                 <ActiveFairReport fair={selectedHistoricalFair} initialSales={historicalSales} onFairClosed={onFairUpdate} hideCloseButton={true} isLoadingSales={isLoadingSales} />
               </div>
             )}
