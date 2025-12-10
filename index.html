@@ -133,6 +133,41 @@
       const LITRO_ADD_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAAEBAQEBAQ';
       const LITRO_SUB_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAADwcHDwcH';
 
+      // --- Helper Functions ---
+      const calculateReportSummary = (feriaConfig, sales) => {
+        let totalPintas = 0;
+        let totalLitros = 0;
+        let montoTotalGeneral = 0;
+        let montoTotalDigital = 0;
+        let montoTotalBillete = 0;
+
+        sales.forEach((sale) => {
+          montoTotalGeneral += sale.montoTotal;
+          if (sale.tipoPago === TipoPago.Digital) {
+            montoTotalDigital += sale.montoTotal;
+          } else {
+            montoTotalBillete += sale.montoTotal;
+          }
+
+          if (sale.tipoUnidad === TipoUnidad.Pinta) {
+            totalPintas += sale.cantidadUnidades;
+          } else if (sale.tipoUnidad === TipoUnidad.Litro) {
+            totalLitros += sale.cantidadUnidades;
+          } else if (sale.tipoUnidad === TipoUnidad.Mixed) {
+              totalPintas += sale.cantidadUnidades / 2;
+              totalLitros += sale.cantidadUnidades / 2;
+          }
+        });
+
+        return {
+          totalPintas: Math.round(totalPintas),
+          totalLitros: Math.round(totalLitros),
+          montoTotalGeneral: parseFloat(montoTotalGeneral.toFixed(2)),
+          montoTotalDigital: parseFloat(montoTotalDigital.toFixed(2)),
+          montoTotalBillete: parseFloat(montoTotalBillete.toFixed(2)),
+        };
+      };
+
       // --- Firebase API Service ---
       const apiService = {
         // Authentication
@@ -220,15 +255,44 @@
         activateHistoricalFeria: async (feriaToActivate) => {
             const batch = db.batch();
 
-            // 1. Move config from history to active
+            // 1. CHECK IF THERE IS AN ACTIVE FERIA, IF SO, ARCHIVE IT
+            const activeConfigDoc = await db.collection('settings').doc('activeFeria').get();
+            if (activeConfigDoc.exists && activeConfigDoc.data().nombreFeria) {
+                const currentConfig = activeConfigDoc.data();
+                const currentSalesSnap = await db.collection('activeSales').get();
+                const currentSales = currentSalesSnap.docs.map(d => ({id: d.id, ...d.data()}));
+                
+                const report = calculateReportSummary(currentConfig, currentSales);
+                
+                // Add current active to history
+                const newHistoryRef = db.collection('feriaHistory').doc();
+                batch.set(newHistoryRef, {
+                    config: currentConfig,
+                    sales: currentSales,
+                    reportSummary: report,
+                    archivedAt: new Date().toISOString()
+                });
+                
+                // Delete active sales to clean up for the new activation
+                currentSalesSnap.docs.forEach(doc => batch.delete(doc.ref));
+            }
+
+            // 2. Set config from historical
             const activeFeriaRef = db.collection('settings').doc('activeFeria');
             batch.set(activeFeriaRef, feriaToActivate.config);
 
-            // 2. Clear current active sales (safeguard)
-            const currentActiveSalesSnapshot = await db.collection('activeSales').get();
-            currentActiveSalesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+            // 3. Clear current active sales (Double check, in case step 1 didn't run because config was empty but sales existed)
+            // It's safer to re-fetch or just delete if we didn't do it above, but step 1 handles the logical flow.
+            // If there were no active config, we assume no active sales that matter or they are orphans. 
+            // For safety, let's query again if we didn't step 1, but batch writes are atomic. 
+            // To keep it simple and safe: We already queued deletes in Step 1 if active existed.
+            // If active didn't exist, we should still ensure activeSales is empty.
+            if (!activeConfigDoc.exists || !activeConfigDoc.data().nombreFeria) {
+                 const orphanSales = await db.collection('activeSales').get();
+                 orphanSales.docs.forEach(doc => batch.delete(doc.ref));
+            }
 
-            // 3. Restore historical sales to active collection
+            // 4. Restore historical sales to active collection
             // We create NEW documents for them to avoid ID conflicts if any
             feriaToActivate.sales.forEach(sale => {
                 const newSaleRef = db.collection('activeSales').doc();
@@ -237,10 +301,8 @@
                 batch.set(newSaleRef, saleData);
             });
 
-            // 4. Delete from history (since it's now active)
-            const oldHistoryRef = db.collection('feriaHistory').doc(feriaToActivate.id);
-            batch.delete(oldHistoryRef);
-
+            // 5. DO NOT Delete from history (per request)
+            
             await batch.commit();
             return true;
         },
@@ -251,49 +313,12 @@
         },
       };
 
-      // Helper function to calculate report summary
-      const calculateReportSummary = (feriaConfig, sales) => {
-        let totalPintas = 0;
-        let totalLitros = 0;
-        let montoTotalGeneral = 0;
-        let montoTotalDigital = 0;
-        let montoTotalBillete = 0;
-
-        sales.forEach((sale) => {
-          montoTotalGeneral += sale.montoTotal;
-          if (sale.tipoPago === TipoPago.Digital) {
-            montoTotalDigital += sale.montoTotal;
-          } else {
-            montoTotalBillete += sale.montoTotal;
-          }
-
-          if (sale.tipoUnidad === TipoUnidad.Pinta) {
-            totalPintas += sale.cantidadUnidades;
-          } else if (sale.tipoUnidad === TipoUnidad.Litro) {
-            totalLitros += sale.cantidadUnidades;
-          } else if (sale.tipoUnidad === TipoUnidad.Mixed) {
-              totalPintas += sale.cantidadUnidades / 2;
-              totalLitros += sale.cantidadUnidades / 2;
-          }
-        });
-
-        return {
-          totalPintas: Math.round(totalPintas),
-          totalLitros: Math.round(totalLitros),
-          montoTotalGeneral: parseFloat(montoTotalGeneral.toFixed(2)),
-          montoTotalDigital: parseFloat(montoTotalDigital.toFixed(2)),
-          montoTotalBillete: parseFloat(montoTotalBillete.toFixed(2)),
-        };
-      };
-
       // --- Components ---
 
       const AuthScreen = ({ onLogin }) => {
         const [usernameInput, setUsernameInput] = React.useState('');
         const [error, setError] = React.useState(null);
         const [loading, setLoading] = React.useState(false);
-        const [showManualLogin, setShowManualLogin] = React.useState(false);
-        const [manualEmail, setManualEmail] = React.useState('');
         const [manualPassword, setManualPassword] = React.useState('');
 
         const normalizedInput = usernameInput.trim().toLowerCase();
@@ -321,11 +346,11 @@
 
         const handleManualLogin = (e) => {
             e.preventDefault();
-            if (!manualEmail || !manualPassword) {
+            if (!usernameInput || !manualPassword) {
                 setError('Por favor completa todos los campos.');
                 return;
             }
-            doLogin(manualEmail, manualPassword, null);
+            doLogin(usernameInput, manualPassword, null);
         };
 
         return (
@@ -346,8 +371,6 @@
                     onChange={(e) => {
                         setUsernameInput(e.target.value);
                         setError(null);
-                        // Reset manual login visibility if input is cleared
-                        if(e.target.value === '') setShowManualLogin(false);
                     }}
                     disabled={loading}
                     className="w-full p-4 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight text-textdark text-center text-xl"
@@ -367,7 +390,7 @@
                 </div>
             )}
 
-            {/* Conditional Buttons based on input */}
+            {/* Conditional Buttons based on shortcode */}
             {isAdminInput && !loading && (
                  <button
                     onClick={() => doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE)}
@@ -386,26 +409,11 @@
                  </button>
             )}
 
-            {/* Manual Login Trigger for other users */}
-            {!isAdminInput && !isSalesInput && usernameInput.length > 0 && !loading && (
+            {/* Manual Login Form auto-appears if not shortcode and input exists */}
+            {!isAdminInput && !isSalesInput && usernameInput.length > 3 && !loading && (
                 <div className="w-full mt-2 animate-fade-in">
-                    {!showManualLogin ? (
-                        <button 
-                            onClick={() => { setShowManualLogin(true); setManualEmail(usernameInput); }}
-                            className="text-sm text-gray-500 hover:text-gray-700 underline w-full text-center"
-                        >
-                            ¿No eres regis ni lol? Iniciar sesión manual
-                        </button>
-                    ) : (
-                        <form onSubmit={handleManualLogin} className="w-full border-t pt-4 border-gray-200 dark:border-gray-600">
+                    <form onSubmit={handleManualLogin} className="w-full border-t pt-4 border-gray-200 dark:border-gray-600">
                              <div className="mb-3">
-                                 <input
-                                    type="email"
-                                    placeholder="Correo electrónico"
-                                    value={manualEmail}
-                                    onChange={(e) => setManualEmail(e.target.value)}
-                                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight mb-3"
-                                 />
                                  <input
                                     type="password"
                                     placeholder="Contraseña"
@@ -420,8 +428,7 @@
                              >
                                 Iniciar Sesión Manual
                              </button>
-                        </form>
-                    )}
+                    </form>
                 </div>
             )}
             
@@ -754,7 +761,7 @@
 
         const handleActivateClick = async (feria) => {
            if (activeFeriaConfig?.nombreFeria) {
-              if (!window.confirm('¡ADVERTENCIA! Ya hay una feria activa. Activar esta feria antigua reemplazará la configuración actual y BORRARÁ las ventas activas actuales si no han sido archivadas. ¿Deseas continuar?')) {
+              if (!window.confirm('¡ADVERTENCIA! Ya hay una feria activa. Se ARCHIVARÁ la feria actual y se activará la seleccionada. ¿Deseas continuar?')) {
                   return;
               }
            }
