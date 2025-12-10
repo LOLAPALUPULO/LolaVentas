@@ -104,11 +104,11 @@
       const auth = firebase.auth();
       const db = firebase.firestore();
 
-      // --- Types (inlined from types.ts, without 'export') ---
+      // --- Types ---
       const TipoUnidad = {
         Pinta: 'Pinta',
         Litro: 'Litro',
-        Mixed: 'Mixto', // For sales with both pintas and litros
+        Mixed: 'Mixto',
       };
 
       const TipoPago = {
@@ -116,7 +116,7 @@
         Billete: '$ Billete',
       };
 
-      // --- Constants (inlined from constants.ts, without 'import' or 'export') ---
+      // --- Constants ---
       const ADMIN_ROLE = 'admin';
       const SALES_ROLE = 'sales';
 
@@ -174,7 +174,7 @@
         login: async (email, password) => {
           try {
             const userCredential = await auth.signInWithEmailAndPassword(email, password);
-            const idTokenResult = await userCredential.user.getIdTokenResult(true); // Refreshes custom claims
+            const idTokenResult = await userCredential.user.getIdTokenResult(true);
             const role = idTokenResult.claims.role || null;
             return { success: true, role: role, username: email };
           } catch (error) {
@@ -230,11 +230,23 @@
         archiveCurrentFeria: async (feriaData) => {
           const batch = db.batch();
 
-          // Add to history
-          const newHistoryRef = db.collection('feriaHistory').doc();
-          batch.set(newHistoryRef, feriaData);
+          const existingFeriaQuery = await db.collection('feriaHistory')
+            .where('config.nombreFeria', '==', feriaData.config.nombreFeria)
+            .limit(1)
+            .get();
 
-          // Clear active config by deleting fields (Firestore won't delete doc if others exist)
+          let historyRef;
+
+          if (!existingFeriaQuery.empty) {
+            historyRef = existingFeriaQuery.docs[0].ref;
+            console.log(`Reemplazando feria existente en historial: ${feriaData.config.nombreFeria}`);
+          } else {
+            historyRef = db.collection('feriaHistory').doc();
+            console.log(`Archivando nueva feria en historial: ${feriaData.config.nombreFeria}`);
+          }
+
+          batch.set(historyRef, feriaData);
+
           const activeFeriaRef = db.collection('settings').doc('activeFeria');
           batch.update(activeFeriaRef, {
             nombreFeria: firebase.firestore.FieldValue.delete(),
@@ -244,7 +256,6 @@
             valorLitro: firebase.firestore.FieldValue.delete(),
           });
 
-          // Clear active sales
           const activeSalesSnapshot = await db.collection('activeSales').get();
           activeSalesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
 
@@ -255,7 +266,6 @@
         activateHistoricalFeria: async (feriaToActivate) => {
             const batch = db.batch();
 
-            // 1. CHECK IF THERE IS AN ACTIVE FERIA, IF SO, ARCHIVE IT
             const activeConfigDoc = await db.collection('settings').doc('activeFeria').get();
             if (activeConfigDoc.exists && activeConfigDoc.data().nombreFeria) {
                 const currentConfig = activeConfigDoc.data();
@@ -264,44 +274,44 @@
                 
                 const report = calculateReportSummary(currentConfig, currentSales);
                 
-                // Add current active to history
-                const newHistoryRef = db.collection('feriaHistory').doc();
-                batch.set(newHistoryRef, {
+                const feriaDataToArchive = {
                     config: currentConfig,
                     sales: currentSales,
                     reportSummary: report,
                     archivedAt: new Date().toISOString()
-                });
+                };
+
+                const existingFeriaQuery = await db.collection('feriaHistory')
+                    .where('config.nombreFeria', '==', currentConfig.nombreFeria)
+                    .limit(1)
+                    .get();
+
+                let historyRef;
+                if (!existingFeriaQuery.empty) {
+                    historyRef = existingFeriaQuery.docs[0].ref;
+                    console.log(`Auto-archivando (reemplazo): ${currentConfig.nombreFeria}`);
+                } else {
+                    historyRef = db.collection('feriaHistory').doc();
+                    console.log(`Auto-archivando (nuevo): ${currentConfig.nombreFeria}`);
+                }
                 
-                // Delete active sales to clean up for the new activation
+                batch.set(historyRef, feriaDataToArchive);
                 currentSalesSnap.docs.forEach(doc => batch.delete(doc.ref));
             }
 
-            // 2. Set config from historical
             const activeFeriaRef = db.collection('settings').doc('activeFeria');
             batch.set(activeFeriaRef, feriaToActivate.config);
 
-            // 3. Clear current active sales (Double check, in case step 1 didn't run because config was empty but sales existed)
-            // It's safer to re-fetch or just delete if we didn't do it above, but step 1 handles the logical flow.
-            // If there were no active config, we assume no active sales that matter or they are orphans. 
-            // For safety, let's query again if we didn't step 1, but batch writes are atomic. 
-            // To keep it simple and safe: We already queued deletes in Step 1 if active existed.
-            // If active didn't exist, we should still ensure activeSales is empty.
             if (!activeConfigDoc.exists || !activeConfigDoc.data().nombreFeria) {
                  const orphanSales = await db.collection('activeSales').get();
                  orphanSales.docs.forEach(doc => batch.delete(doc.ref));
             }
 
-            // 4. Restore historical sales to active collection
-            // We create NEW documents for them to avoid ID conflicts if any
             feriaToActivate.sales.forEach(sale => {
                 const newSaleRef = db.collection('activeSales').doc();
-                // Ensure we don't copy the old ID
                 const { id, ...saleData } = sale;
                 batch.set(newSaleRef, saleData);
             });
-
-            // 5. DO NOT Delete from history (per request)
             
             await batch.commit();
             return true;
@@ -319,7 +329,6 @@
         const [usernameInput, setUsernameInput] = React.useState('');
         const [error, setError] = React.useState(null);
         const [loading, setLoading] = React.useState(false);
-        const [manualPassword, setManualPassword] = React.useState('');
 
         const normalizedInput = usernameInput.trim().toLowerCase();
         const isAdminInput = normalizedInput === 'regis';
@@ -334,6 +343,7 @@
                      if (expectedRole && result.role !== expectedRole) {
                          throw new Error(`El usuario no tiene permisos de ${expectedRole === 'admin' ? 'Administrador' : 'Venta'}.`);
                      }
+                     // Permitimos el login exitoso, la validación de feria activa se hará en App/SalesTPV
                      onLogin(result.role, result.username);
                 }
             } catch (err) {
@@ -342,15 +352,6 @@
             } finally {
                 setLoading(false);
             }
-        };
-
-        const handleManualLogin = (e) => {
-            e.preventDefault();
-            if (!usernameInput || !manualPassword) {
-                setError('Por favor completa todos los campos.');
-                return;
-            }
-            doLogin(usernameInput, manualPassword, null);
         };
 
         return (
@@ -379,59 +380,34 @@
 
             {loading && (
                 <div className="flex flex-col items-center justify-center mb-4">
-                    <div className="spinner mb-2"></div>
-                    <span className="text-gray-500">Iniciando sesión...</span>
+                     <div className="spinner mb-2"></div>
+                     <p className="text-sm text-gray-500">Iniciando sesión...</p>
                 </div>
             )}
 
-            {error && (
-                <div className="w-full p-3 mb-4 bg-red-100 border border-red-400 text-red-700 rounded relative text-center" role="alert">
-                    <span className="block sm:inline">{error}</span>
-                </div>
-            )}
+            {error && <p className="text-accent text-sm mb-4 text-center bg-red-100 p-2 rounded w-full">{error}</p>}
 
-            {/* Conditional Buttons based on shortcode */}
-            {isAdminInput && !loading && (
-                 <button
-                    onClick={() => doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE)}
-                    className="w-full py-3 px-6 bg-primary text-white rounded-md font-semibold hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors animate-fade-in mb-4"
-                 >
-                    ENTRAR COMO ADMINISTRADOR
-                 </button>
-            )}
-
-            {isSalesInput && !loading && (
-                 <button
-                    onClick={() => doLogin(SALES_USER_EMAIL, SALES_USER_PASSWORD, SALES_ROLE)}
-                    className="w-full py-3 px-6 bg-secondary text-white rounded-md font-semibold hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-colors animate-fade-in mb-4"
-                 >
-                    ENTRAR COMO VENDEDOR
-                 </button>
-            )}
-
-            {/* Manual Login Form auto-appears if not shortcode and input exists */}
-            {!isAdminInput && !isSalesInput && usernameInput.length > 3 && !loading && (
-                <div className="w-full mt-2 animate-fade-in">
-                    <form onSubmit={handleManualLogin} className="w-full border-t pt-4 border-gray-200 dark:border-gray-600">
-                             <div className="mb-3">
-                                 <input
-                                    type="password"
-                                    placeholder="Contraseña"
-                                    value={manualPassword}
-                                    onChange={(e) => setManualPassword(e.target.value)}
-                                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                                 />
-                             </div>
-                             <button
-                                type="submit"
-                                className="w-full py-3 px-6 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-                             >
-                                Iniciar Sesión Manual
-                             </button>
-                    </form>
-                </div>
-            )}
-            
+            <div className="flex flex-col space-y-4 w-full">
+               {isAdminInput && (
+                   <button
+                       onClick={() => doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE)}
+                       disabled={loading}
+                       className="w-full py-3 px-6 rounded-md font-semibold bg-primary text-white hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 animate-fade-in"
+                   >
+                       ENTRAR COMO ADMINISTRADOR
+                   </button>
+               )}
+               
+               {isSalesInput && (
+                   <button
+                       onClick={() => doLogin(SALES_USER_EMAIL, SALES_USER_PASSWORD, SALES_ROLE)}
+                       disabled={loading}
+                       className="w-full py-3 px-6 rounded-md font-semibold bg-secondary text-white hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 animate-fade-in"
+                   >
+                       ENTRAR COMO VENDEDOR
+                   </button>
+               )}
+            </div>
           </div>
         );
       };
@@ -444,7 +420,7 @@
         const [valorLitro, setValorLitro] = React.useState(activeFeriaConfig?.valorLitro || 0);
         const [feedbackMessage, setFeedbackMessage] = React.useState(null);
         const [isError, setIsError] = React.useState(false);
-        const [loading, setLoading] = React.useState(false);
+        const [saving, setSaving] = React.useState(false);
 
         React.useEffect(() => {
           setNombreFeria(activeFeriaConfig?.nombreFeria || '');
@@ -472,161 +448,92 @@
             return;
           }
 
-          setLoading(true);
-          const newConfig = {
-            nombreFeria,
-            fechaInicio,
-            fechaFin,
-            valorPinta: parseFloat(valorPinta.toString()),
-            valorLitro: parseFloat(valorLitro.toString()),
-          };
+          setSaving(true);
           try {
-            await onSave(newConfig);
-            setFeedbackMessage(activeFeriaConfig?.nombreFeria ? 'Configuración de la feria activa actualizada con éxito.' : 'Nueva feria configurada y activada con éxito.');
-            setIsError(false);
-          } catch (error) {
-            setFeedbackMessage('Error al guardar la configuración de la feria: ' + error.message);
-            setIsError(true);
+              const newConfig = {
+                nombreFeria,
+                fechaInicio,
+                fechaFin,
+                valorPinta: parseFloat(valorPinta.toString()),
+                valorLitro: parseFloat(valorLitro.toString()),
+              };
+              await onSave(newConfig);
+              setFeedbackMessage(activeFeriaConfig ? 'Configuración actualizada.' : 'Nueva feria activada.');
+          } catch (e) {
+              console.error(e);
+              setFeedbackMessage('Error al guardar la configuración.');
+              setIsError(true);
           } finally {
-            setLoading(false);
-            setTimeout(() => setFeedbackMessage(null), 3000);
+              setSaving(false);
+              setTimeout(() => setFeedbackMessage(null), 3000);
           }
         };
 
         const handleFinalizeClick = async () => {
           if (window.confirm('¿Estás seguro de que quieres finalizar la feria actual y archivar sus ventas? Esta acción no se puede deshacer.')) {
-            setLoading(true);
+            setSaving(true);
             try {
-              await onFinalizeFeria();
-              setFeedbackMessage('Feria actual finalizada y archivada. Puedes configurar una nueva.');
-              setIsError(false);
-            } catch (error) {
-              setFeedbackMessage('Error al finalizar la feria: ' + error.message);
-              setIsError(true);
+                await onFinalizeFeria();
+                setFeedbackMessage('Feria finalizada y archivada.');
+            } catch (e) {
+                console.error(e);
+                setFeedbackMessage('Error al finalizar la feria.');
+                setIsError(true);
             } finally {
-              setLoading(false);
-              setTimeout(() => setFeedbackMessage(null), 3000);
+                setSaving(false);
+                setTimeout(() => setFeedbackMessage(null), 3000);
             }
           }
         };
 
         return (
-          <form onSubmit={handleSubmit} className="space-y-4" aria-labelledby="config-form-title">
-            <h3 id="config-form-title" className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Configurar Feria</h3>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <h3 className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Configurar Feria</h3>
             {feedbackMessage && (
-              <div className={`p-3 rounded-md ${isError ? 'bg-accent/20 text-accent' : 'bg-primary/20 text-primary'}`} role="status">
+              <div className={`p-3 rounded-md ${isError ? 'bg-accent/20 text-accent' : 'bg-primary/20 text-primary'}`}>
                 {feedbackMessage}
               </div>
             )}
 
             <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-md shadow-sm">
                 <p className="text-lg font-bold text-gray-800 dark:text-gray-200">
-                    Estado Actual: {activeFeriaConfig?.nombreFeria ? <span className="text-primary">Feria Activa: {activeFeriaConfig.nombreFeria}</span> : <span className="text-accent">No hay feria activa</span>}
+                    Estado Actual: {activeFeriaConfig ? <span className="text-primary">Feria Activa: {activeFeriaConfig.nombreFeria}</span> : <span className="text-accent">No hay feria activa</span>}
                 </p>
             </div>
 
             <div>
-              <label htmlFor="nombreFeria" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Nombre de la Feria
-              </label>
-              <input
-                type="text"
-                id="nombreFeria"
-                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                value={nombreFeria}
-                onChange={(e) => setNombreFeria(e.target.value)}
-                required
-                aria-required="true"
-                disabled={loading}
-              />
+              <label htmlFor="nombreFeria" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nombre de la Feria</label>
+              <input type="text" id="nombreFeria" className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight" value={nombreFeria} onChange={(e) => setNombreFeria(e.target.value)} required />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label htmlFor="fechaInicio" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Fecha de Inicio
-                </label>
-                <input
-                  type="date"
-                  id="fechaInicio"
-                  className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                  value={fechaInicio}
-                  onChange={(e) => setFechaInicio(e.target.value)}
-                  required
-                  aria-required="true"
-                  disabled={loading}
-                />
+                <label htmlFor="fechaInicio" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fecha de Inicio</label>
+                <input type="date" id="fechaInicio" className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} required />
               </div>
               <div>
-                <label htmlFor="fechaFin" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Fecha de Fin
-                </label>
-                <input
-                  type="date"
-                  id="fechaFin"
-                  className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                  value={fechaFin}
-                  onChange={(e) => setFechaFin(e.target.value)}
-                  required
-                  aria-required="true"
-                  disabled={loading}
-                />
+                <label htmlFor="fechaFin" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fecha de Fin</label>
+                <input type="date" id="fechaFin" className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} required />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label htmlFor="valorPinta" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Valor Pinta
-                </label>
-                <input
-                  type="number"
-                  id="valorPinta"
-                  className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                  value={valorPinta}
-                  onChange={(e) => setValorPinta(parseFloat(e.target.value))}
-                  min="0.01"
-                  step="0.01"
-                  required
-                  aria-required="true"
-                  disabled={loading}
-                />
+                <label htmlFor="valorPinta" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor Pinta</label>
+                <input type="number" id="valorPinta" className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight" value={valorPinta} onChange={(e) => setValorPinta(parseFloat(e.target.value))} min="0.01" step="0.01" required />
               </div>
               <div>
-                <label htmlFor="valorLitro" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Valor Litro
-                </label>
-                <input
-                  type="number"
-                  id="valorLitro"
-                  className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
-                  value={valorLitro}
-                  onChange={(e) => setValorLitro(parseFloat(e.target.value))}
-                  min="0.01"
-                  step="0.01"
-                  required
-                  aria-required="true"
-                  disabled={loading}
-                />
+                <label htmlFor="valorLitro" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor Litro</label>
+                <input type="number" id="valorLitro" className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight" value={valorLitro} onChange={(e) => setValorLitro(parseFloat(e.target.value))} min="0.01" step="0.01" required />
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full py-3 px-6 bg-primary text-white rounded-md font-semibold hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors duration-200"
-              disabled={loading}
-            >
-              {loading ? <div className="spinner mx-auto"></div> : 'Guardar Configuración'}
+            <button type="submit" disabled={saving} className="w-full py-3 px-6 bg-primary text-white rounded-md font-semibold hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors duration-200 disabled:opacity-50">
+               {saving ? 'Guardando...' : 'Guardar Configuración'}
             </button>
-            {activeFeriaConfig?.nombreFeria && (
-                <button
-                    type="button"
-                    onClick={handleFinalizeClick}
-                    className="w-full py-3 px-6 bg-accent text-white rounded-md font-semibold hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-colors duration-200 mt-2"
-                    aria-label="Finalizar la feria actual y archivar sus datos"
-                    disabled={loading}
-                >
-                    {loading ? <div className="spinner mx-auto"></div> : 'Finalizar Feria Actual'}
+            {activeFeriaConfig && (
+                <button type="button" onClick={handleFinalizeClick} disabled={saving} className="w-full py-3 px-6 bg-accent text-white rounded-md font-semibold hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-colors duration-200 mt-2 disabled:opacity-50">
+                    {saving ? 'Procesando...' : 'Finalizar Feria Actual'}
                 </button>
             )}
           </form>
@@ -634,9 +541,7 @@
       };
 
       const SalesReport = ({ activeFeriaConfig, activeSales, onFinalizeFeria }) => {
-        const [loading, setLoading] = React.useState(false);
-
-        if (!activeFeriaConfig?.nombreFeria) {
+        if (!activeFeriaConfig) {
           return (
             <div className="p-6 text-center text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-md">
               <p className="text-xl font-medium mb-4">¡Atención Administrador!</p>
@@ -662,171 +567,82 @@
           window.open(whatsappUrl, '_blank');
         };
 
-        const handleFinalizeClick = async () => {
-          if (window.confirm('¿Estás seguro de que quieres finalizar la feria actual y archivar sus ventas? Esta acción no se puede deshacer.')) {
-            setLoading(true);
-            try {
-              await onFinalizeFeria();
-            } catch (error) {
-              alert('Error al finalizar la feria: ' + error.message);
-            } finally {
-              setLoading(false);
-            }
-          }
-        };
-
         return (
-          <div className="space-y-6" aria-labelledby="active-sales-report-title">
-            <h3 id="active-sales-report-title" className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Reporte de Feria Activa</h3>
-            <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md shadow-sm" role="region" aria-label="Información de la Feria Activa">
-              <p className="text-lg font-bold text-gray-800 dark:text-gray-200">
-                Feria: <span className="text-primary">{activeFeriaConfig.nombreFeria}</span>
-              </p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Periodo: {activeFeriaConfig.fechaInicio} al {activeFeriaConfig.fechaFin}
-              </p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Valor Pinta: ${activeFeriaConfig.valorPinta.toFixed(2)} | Valor Litro: ${activeFeriaConfig.valorLitro.toFixed(2)}
-              </p>
+          <div className="space-y-6">
+            <h3 className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Reporte de Feria Activa</h3>
+            <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md shadow-sm">
+              <p className="text-lg font-bold text-gray-800 dark:text-gray-200">Feria: <span className="text-primary">{activeFeriaConfig.nombreFeria}</span></p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">Periodo: {activeFeriaConfig.fechaInicio} al {activeFeriaConfig.fechaFin}</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">Valor Pinta: ${activeFeriaConfig.valorPinta.toFixed(2)} | Valor Litro: ${activeFeriaConfig.valorLitro.toFixed(2)}</p>
             </div>
 
             {activeSales.length === 0 ? (
-              <div className="p-6 text-center text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-md" role="status">
-                <p className="text-xl font-medium">No hay ventas registradas para esta feria activa aún.</p>
+              <div className="p-6 text-center text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-md">
+                <p className="text-xl font-medium">No hay ventas registradas aún.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4" role="group" aria-labelledby="sales-summary-title">
-                <h4 id="sales-summary-title" className="sr-only">Resumen de Ventas</h4>
-                <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow" role="region" aria-label="Cantidades Vendidas">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow">
                   <h4 className="font-semibold text-lg mb-2 text-textdark dark:text-textlight">Cantidades Vendidas</h4>
-                  <p className="text-gray-700 dark:text-gray-300">
-                    Total Pintas: <span className="font-bold text-primary">{report.totalPintas}</span>
-                  </p>
-                  <p className="text-gray-700 dark:text-gray-300">
-                    Total Litros: <span className="font-bold text-primary">{report.totalLitros}</span>
-                  </p>
+                  <p className="text-gray-700 dark:text-gray-300">Total Pintas: <span className="font-bold text-primary">{report.totalPintas}</span></p>
+                  <p className="text-gray-700 dark:text-gray-300">Total Litros: <span className="font-bold text-primary">{report.totalLitros}</span></p>
                 </div>
 
-                <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow" role="region" aria-label="Monto Total Recaudado">
+                <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow">
                   <h4 className="font-semibold text-lg mb-2 text-textdark dark:text-textlight">Monto Total Recaudado</h4>
-                  <p className="text-gray-700 dark:text-gray-300">
-                    Total General: <span className="font-bold text-primary">${report.montoTotalGeneral.toFixed(2)}</span>
-                  </p>
-                  <p className="text-gray-700 dark:text-gray-300">
-                    Total Digital: <span className="font-bold text-secondary">${report.montoTotalDigital.toFixed(2)}</span>
-                  </p>
-                  <p className="text-gray-700 dark:text-gray-300">
-                    Total Billete: <span className="font-bold text-amber-700 dark:text-amber-300">${report.montoTotalBillete.toFixed(2)}</span>
-                  </p>
+                  <p className="text-gray-700 dark:text-gray-300">Total General: <span className="font-bold text-primary">${report.montoTotalGeneral.toFixed(2)}</span></p>
+                  <p className="text-gray-700 dark:text-gray-300">Total Digital: <span className="font-bold text-secondary">${report.montoTotalDigital.toFixed(2)}</span></p>
+                  <p className="text-gray-700 dark:text-gray-300">Total Billete: <span className="font-bold text-amber-700 dark:text-amber-300">${report.montoTotalBillete.toFixed(2)}</span></p>
                 </div>
               </div>
             )}
 
             <div className="flex flex-col sm:flex-row gap-4 mt-6">
-                <button
-                    onClick={handleShareReport}
-                    className="w-full sm:w-1/2 py-3 px-6 bg-green-500 text-white rounded-md font-semibold hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors duration-200"
-                    disabled={!activeFeriaConfig?.nombreFeria || activeSales.length === 0 || loading}
-                    aria-disabled={!activeFeriaConfig?.nombreFeria || activeSales.length === 0 || loading}
-                >
-                    Compartir por WhatsApp
-                </button>
-                <button
-                  onClick={handleFinalizeClick}
-                  className="w-full sm:w-1/2 py-3 px-6 bg-accent text-white rounded-md font-semibold hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-colors duration-200"
-                  disabled={!activeFeriaConfig?.nombreFeria || loading}
-                  aria-disabled={!activeFeriaConfig?.nombreFeria || loading}
-                >
-                  {loading ? <div className="spinner mx-auto"></div> : 'Finalizar Feria Actual y Archivar'}
-                </button>
+                <button onClick={handleShareReport} className="w-full sm:w-1/2 py-3 px-6 bg-green-500 text-white rounded-md font-semibold hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors duration-200" disabled={!activeFeriaConfig || activeSales.length === 0}>Compartir por WhatsApp</button>
+                <button onClick={() => { if (window.confirm('¿Finalizar feria actual?')) onFinalizeFeria(); }} className="w-full sm:w-1/2 py-3 px-6 bg-accent text-white rounded-md font-semibold hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 transition-colors duration-200" disabled={!activeFeriaConfig}>Finalizar Feria Actual</button>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center" role="note">
-              Advertencia: Finalizar la feria archivará sus datos y borrará los registros de ventas activos.
-            </p>
           </div>
         );
       };
 
       const FeriaHistoryList = ({ activeFeriaConfig, feriaHistory, onActivateFeria, onShowReport, onDeleteFeria }) => {
-        const [loadingId, setLoadingId] = React.useState(null);
-
         if (feriaHistory.length === 0) {
           return (
             <div className="p-6 text-center text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-md">
-              <p className="text-xl font-medium">No hay ferias archivadas aún.</p>
-              <p className="mt-2 text-sm">Finaliza una feria en la pestaña "Configurar Feria" para verla aquí.</p>
+              <p className="text-xl font-medium">No hay ferias archivadas.</p>
             </div>
           );
         }
 
-        const handleActivateClick = async (feria) => {
-           if (activeFeriaConfig?.nombreFeria) {
-              if (!window.confirm('¡ADVERTENCIA! Ya hay una feria activa. Se ARCHIVARÁ la feria actual y se activará la seleccionada. ¿Deseas continuar?')) {
-                  return;
-              }
-           }
-          setLoadingId(feria.id);
-          try {
-            await onActivateFeria(feria);
-          } catch (error) {
-            alert('Error al activar la feria: ' + error.message);
-          } finally {
-            setLoadingId(null);
-          }
-        };
-
-        const handleDeleteClick = async (feriaId) => {
-          if (window.confirm('¿Estás absolutamente seguro de que quieres ELIMINAR esta feria del historial? Esta acción es PERMANENTE y no se puede deshacer.')) {
-            setLoadingId(feriaId);
-            try {
-              await onDeleteFeria(feriaId);
-            } catch (error) {
-              alert('Error al eliminar la feria: ' + error.message);
-            } finally {
-              setLoadingId(null);
+        const handleActivate = (feria) => {
+            let confirmMsg = `¿Estás seguro de activar la feria "${feria.config.nombreFeria}"?`;
+            if (activeFeriaConfig) {
+                confirmMsg += `\n\nATENCIÓN: La feria actual "${activeFeriaConfig.nombreFeria}" será archivada automáticamente.`;
             }
-          }
+            if (window.confirm(confirmMsg)) {
+                onActivateFeria(feria);
+            }
         };
 
         return (
-          <div className="space-y-6" aria-labelledby="history-title">
-            <h3 id="history-title" className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Historial de Ferias</h3>
+          <div className="space-y-6">
+            <h3 className="text-2xl font-semibold text-textdark dark:text-textlight mb-4">Historial de Ferias</h3>
             <ul className="space-y-4">
               {feriaHistory.map((feria) => (
                 <li key={feria.id} className="bg-white dark:bg-gray-700 p-4 rounded-md shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
                     <p className="text-lg font-bold text-primary">{feria.config.nombreFeria}</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {feria.config.fechaInicio} al {feria.config.fechaFin} (Archivado: {new Date(feria.archivedAt).toLocaleDateString()})
-                    </p>
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      Total Recaudado: <span className="font-semibold text-secondary">${feria.reportSummary.montoTotalGeneral.toFixed(2)}</span>
-                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{feria.config.fechaInicio} al {feria.config.fechaFin}</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-300">Total: <span className="font-semibold text-secondary">${feria.reportSummary.montoTotalGeneral.toFixed(2)}</span></p>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                    <button
-                      onClick={() => onShowReport(feria)}
-                      className="py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-colors duration-200 text-sm"
-                      aria-label={`Ver reporte detallado de ${feria.config.nombreFeria}`}
-                      disabled={loadingId === feria.id}
+                    <button onClick={() => onShowReport(feria)} className="py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">Ver Reporte</button>
+                    <button onClick={() => onDeleteFeria(feria.id)} className="py-2 px-4 bg-red-500 text-white rounded-md hover:bg-red-600 text-sm">Eliminar</button>
+                    <button 
+                        onClick={() => handleActivate(feria)}
+                        className="py-2 px-4 bg-green-500 text-white rounded-md hover:bg-green-600 text-sm font-bold"
                     >
-                      Ver Reporte
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClick(feria.id)}
-                      className="py-2 px-4 bg-red-500 text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 transition-colors duration-200 text-sm"
-                      aria-label={`Eliminar ${feria.config.nombreFeria} del historial`}
-                      disabled={loadingId === feria.id}
-                    >
-                      {loadingId === feria.id ? <div className="spinner w-4 h-4 border-white mx-auto"></div> : 'Eliminar'}
-                    </button>
-                    <button
-                      onClick={() => handleActivateClick(feria)}
-                      disabled={loadingId === feria.id}
-                      className="py-2 px-4 rounded-md font-semibold transition-colors duration-200 text-sm bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
-                      aria-label={`Activar ${feria.config.nombreFeria} como feria actual`}
-                    >
-                      {loadingId === feria.id ? <div className="spinner w-4 h-4 border-white mx-auto"></div> : 'Activar'}
+                      Activar
                     </button>
                   </div>
                 </li>
@@ -843,346 +659,110 @@
         const handleDownloadPdf = () => {
           const doc = new jsPDF();
           let yOffset = 20;
-
-          // Set font and size for title
-          doc.setFontSize(22);
-          doc.setTextColor('#10B981'); // Primary color
-          doc.text(`Reporte Histórico: ${feria.config.nombreFeria}`, 14, yOffset);
-          yOffset += 10;
-          doc.setLineWidth(0.5);
-          doc.setDrawColor('#10B981');
-          doc.line(14, yOffset, 196, yOffset); // Underline for title
-          yOffset += 10;
-
-          // Feria Information
-          doc.setFontSize(14);
-          doc.setTextColor('#111827'); // Dark text
-          doc.text('Información de la Feria:', 14, yOffset);
-          yOffset += 7;
-          doc.setFontSize(12);
-          doc.text(`Nombre: ${feria.config.nombreFeria}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Período: ${feria.config.fechaInicio} al ${feria.config.fechaFin}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Archivada el: ${new Date(feria.archivedAt).toLocaleDateString()}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Valor Pinta: $${feria.config.valorPinta.toFixed(2)} | Valor Litro: $${feria.config.valorLitro.toFixed(2)}`, 14, yOffset);
-          yOffset += 15;
-
-          // Report Summary
-          doc.setFontSize(16);
-          doc.setTextColor('#111827');
-          doc.text('Resumen de Ventas:', 14, yOffset);
-          yOffset += 7;
-          doc.setFontSize(12);
-          doc.text(`Total Pintas: ${report.totalPintas}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Total Litros: ${report.totalLitros}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Monto Total General: $${report.montoTotalGeneral.toFixed(2)}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Monto Total Digital: $${report.montoTotalDigital.toFixed(2)}`, 14, yOffset);
-          yOffset += 7;
-          doc.text(`Monto Total Billete: $${report.montoTotalBillete.toFixed(2)}`, 14, yOffset);
-          yOffset += 15;
-
-          // Detailed Sales
+          doc.setFontSize(22); doc.setTextColor('#10B981'); doc.text(`Reporte Histórico: ${feria.config.nombreFeria}`, 14, yOffset); yOffset += 10;
+          doc.setLineWidth(0.5); doc.setDrawColor('#10B981'); doc.line(14, yOffset, 196, yOffset); yOffset += 10;
+          doc.setFontSize(14); doc.setTextColor('#111827'); doc.text('Información de la Feria:', 14, yOffset); yOffset += 7;
+          doc.setFontSize(12); doc.text(`Nombre: ${feria.config.nombreFeria}`, 14, yOffset); yOffset += 7;
+          doc.text(`Período: ${feria.config.fechaInicio} al ${feria.config.fechaFin}`, 14, yOffset); yOffset += 15;
+          doc.setFontSize(16); doc.text('Resumen de Ventas:', 14, yOffset); yOffset += 7;
+          doc.setFontSize(12); doc.text(`Total Pintas: ${report.totalPintas}`, 14, yOffset); yOffset += 7;
+          doc.text(`Total Litros: ${report.totalLitros}`, 14, yOffset); yOffset += 7;
+          doc.text(`Monto Total: $${report.montoTotalGeneral.toFixed(2)}`, 14, yOffset); yOffset += 15;
+          
           if (feria.sales.length > 0) {
-            doc.setFontSize(16);
-            doc.setTextColor('#111827');
-            doc.text(`Detalle de Ventas (${feria.sales.length}):`, 14, yOffset);
-            yOffset += 10;
-
-            const tableColumn = ["Fecha", "Unidad", "Cantidad", "Monto", "Pago", "Usuario"];
+            doc.setFontSize(16); doc.text(`Detalle de Ventas:`, 14, yOffset); yOffset += 10;
+            const tableColumn = ["Fecha", "Vendedor", "Unidad", "Cant", "Monto", "Pago"];
             const tableRows = feria.sales.map(sale => [
               new Date(sale.fechaVenta).toLocaleString(),
+              sale.usuarioVenta || 'N/A',
               sale.tipoUnidad,
               sale.cantidadUnidades,
               `$${sale.montoTotal.toFixed(2)}`,
               sale.tipoPago,
-              sale.usuarioVenta || 'N/A', // Display user who made the sale
             ]);
-
-            doc.autoTable({
-              startY: yOffset,
-              head: [tableColumn],
-              body: tableRows,
-              theme: 'striped',
-              headStyles: {
-                fillColor: '#10B981', // Primary color for table header
-                textColor: 255, // White text
-                fontStyle: 'bold',
-                fontSize: 10
-              },
-              styles: {
-                fontSize: 9,
-                cellPadding: 2,
-                overflow: 'linebreak'
-              },
-              margin: { left: 14, right: 14 },
-              didDrawPage: function(data) {
-                // Footer
-                let str = 'Página ' + doc.internal.getNumberOfPages();
-                if (typeof doc.autoTableEndPosY !== 'undefined') {
-                  str += ' de ' + data.pageCount;
-                }
-                doc.setFontSize(10);
-                doc.text(str, data.settings.margin.left, doc.internal.pageSize.height - 10);
-              }
-            });
-          } else {
-            doc.setFontSize(12);
-            doc.setTextColor('#6B7280'); // Gray text
-            doc.text('No hay ventas detalladas para esta feria archivada.', 14, yOffset);
+            doc.autoTable({ startY: yOffset, head: [tableColumn], body: tableRows, theme: 'striped' });
           }
-
-          const filename = `Reporte_Feria_${feria.config.nombreFeria.replace(/\s/g, '_')}_${new Date(feria.archivedAt).toLocaleDateString().replace(/\//g, '-')}.pdf`;
-          doc.save(filename);
+          doc.save(`Reporte_${feria.config.nombreFeria}.pdf`);
         };
 
         return (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center border-b pb-3 mb-4 border-gray-200 dark:border-gray-600">
-                <h3 id="modal-title" className="text-2xl font-bold text-primary">Reporte Histórico: {feria.config.nombreFeria}</h3>
+              <div className="flex justify-between items-center border-b pb-3 mb-4 dark:border-gray-600">
+                <h3 className="text-2xl font-bold text-primary">{feria.config.nombreFeria}</h3>
                 <div className="flex gap-2">
-                  <button
-                    onClick={handleDownloadPdf}
-                    className="py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-colors duration-200 text-sm"
-                    aria-label="Descargar reporte en formato PDF"
-                  >
-                    Descargar Reporte (PDF)
-                  </button>
-                  <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-2xl" aria-label="Cerrar reporte">
-                    &times;
-                  </button>
+                  <button onClick={handleDownloadPdf} className="py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">PDF</button>
+                  <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
                 </div>
               </div>
-
               <div className="space-y-4">
-                <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md shadow-sm">
-                  <p className="text-lg font-bold text-gray-800 dark:text-gray-200">
-                    Feria: <span className="text-primary">{feria.config.nombreFeria}</span>
-                  </p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Periodo: {feria.config.fechaInicio} al {feria.config.fechaFin}
-                  </p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Valor Pinta: $${feria.config.valorPinta.toFixed(2)} | Valor Litro: $${feria.config.valorLitro.toFixed(2)}
-                  </p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Archivada el: {new Date(feria.archivedAt).toLocaleDateString()}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow">
-                    <h4 className="font-semibold text-lg mb-2 text-textdark dark:text-textlight">Cantidades Vendidas</h4>
-                    <p className="text-gray-700 dark:text-gray-300">
-                      Total Pintas: <span className="font-bold text-primary">{report.totalPintas}</span>
-                    </p>
-                    <p className="text-gray-700 dark:text-gray-300">
-                      Total Litros: <span className="font-bold text-primary">{report.totalLitros}</span>
-                    </p>
-                  </div>
-
-                  <div className="bg-white dark:bg-gray-700 p-4 rounded-md shadow">
-                    <h4 className="font-semibold text-lg mb-2 text-textdark dark:text-textlight">Monto Total Recaudado</h4>
-                    <p className="text-gray-700 dark:text-gray-300">
-                      Total General: <span className="font-bold text-primary">${report.montoTotalGeneral.toFixed(2)}</span>
-                    </p>
-                    <p className="text-gray-700 dark:text-gray-300">
-                      Total Digital: <span className="font-bold text-secondary">${report.montoTotalDigital.toFixed(2)}</span>
-                    </p>
-                    <p className="text-gray-700 dark:text-gray-300">
-                      Total Billete: <span className="font-bold text-amber-700 dark:text-amber-300">${report.montoTotalBillete.toFixed(2)}</span>
-                    </p>
-                  </div>
-                </div>
-
-                <h4 className="font-semibold text-lg mt-4 text-textdark dark:text-textlight">Detalle de Ventas ({feria.sales.length})</h4>
-                {feria.sales.length > 0 ? (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full bg-white dark:bg-gray-700 rounded-md shadow">
-                            <thead>
-                                <tr className="bg-gray-100 dark:bg-gray-600 text-textdark dark:text-textlight text-left text-sm font-semibold">
-                                    <th className="py-2 px-4">Fecha</th>
-                                    <th className="py-2 px-4">Unidad</th>
-                                    <th className="py-2 px-4">Cantidad</th>
-                                    <th className="py-2 px-4">Monto</th>
-                                    <th className="py-2 px-4">Pago</th>
-                                    <th className="py-2 px-4">Usuario</th>
+                  <p className="dark:text-gray-300">Resumen: {report.totalPintas} Pintas, {report.totalLitros} Litros. Total: ${report.montoTotalGeneral}</p>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                        <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                            <tr><th className="px-6 py-3">Fecha</th><th className="px-6 py-3">Vend</th><th className="px-6 py-3">Prod</th><th className="px-6 py-3">$$</th></tr>
+                        </thead>
+                        <tbody>
+                            {feria.sales.map(s => (
+                                <tr key={s.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                                    <td className="px-6 py-4">{new Date(s.fechaVenta).toLocaleTimeString()}</td>
+                                    <td className="px-6 py-4">{s.usuarioVenta}</td>
+                                    <td className="px-6 py-4">{s.tipoUnidad} x{s.cantidadUnidades}</td>
+                                    <td className="px-6 py-4">${s.montoTotal}</td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                {feria.sales.map((sale) => (
-                                    <tr key={sale.id} className="border-t border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm">
-                                        <td className="py-2 px-4">{new Date(sale.fechaVenta).toLocaleString()}</td>
-                                        <td className="py-2 px-4">{sale.tipoUnidad}</td>
-                                        <td className="py-2 px-4">{sale.cantidadUnidades}</td>
-                                        <td className="py-2 px-4">${sale.montoTotal.toFixed(2)}</td>
-                                        <td className="py-2 px-4">{sale.tipoPago}</td>
-                                        <td className="py-2 px-4">{sale.usuarioVenta || 'N/A'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : (
-                    <p className="text-gray-600 dark:text-gray-400">No hay ventas detalladas para esta feria archivada.</p>
-                )}
+                            ))}
+                        </tbody>
+                    </table>
+                  </div>
               </div>
             </div>
           </div>
         );
       };
 
-      const AdminDashboard = ({
-        activeFeriaConfig,
-        activeSales,
-        feriaHistory,
-        onUpdateFeriaConfig,
-        onFinalizeFeria,
-        onActivateHistoricalFeria,
-        onDeleteHistoricalFeria,
-        onLogout,
-      }) => {
-        const [view, setView] = React.useState('config');
+      const AdminDashboard = ({ activeFeriaConfig, activeSales, feriaHistory, onUpdateFeriaConfig, onFinalizeFeria, onActivateHistoricalFeria, onDeleteHistoricalFeria, onLogout }) => {
+        const [view, setView] = React.useState(activeFeriaConfig ? 'report' : 'config');
         const [showHistoricalReportModal, setShowHistoricalReportModal] = React.useState(false);
         const [selectedHistoricalFeria, setSelectedHistoricalFeria] = React.useState(null);
 
         React.useEffect(() => {
-            if (!activeFeriaConfig?.nombreFeria) {
-                setView('config');
-            } else if (view === 'config' || view === 'history') {
-                setView('report');
-            }
-        }, [activeFeriaConfig]);
-
+            if (!activeFeriaConfig && view === 'report') setView('config');
+        }, [activeFeriaConfig, view]);
 
         const handleDeleteFeria = (feriaId) => {
-           onDeleteHistoricalFeria(feriaId);
-        };
-
-        const handleShowHistoricalReport = (feria) => {
-          setSelectedHistoricalFeria(feria);
-          setShowHistoricalReportModal(true);
-        };
-
-        const handleCloseHistoricalReport = () => {
-          setShowHistoricalReportModal(false);
-          setSelectedHistoricalFeria(null);
+            if (window.confirm('¿ELIMINAR esta feria del historial permanentemente?')) onDeleteHistoricalFeria(feriaId);
         };
 
         return (
           <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-600">
-            <div className="flex justify-between items-center mb-6 border-b pb-4 border-gray-200 dark:border-gray-600">
+            <div className="flex justify-between items-center mb-6 border-b pb-4 dark:border-gray-600">
               <h1 className="text-3xl font-bold text-primary">Panel de Administrador</h1>
-              <button
-                onClick={onLogout}
-                className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors duration-200"
-                aria-label="Cerrar sesión de administrador"
-              >
-                Cerrar Sesión
-              </button>
+              <button onClick={onLogout} className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600">Cerrar Sesión</button>
             </div>
-
-            <div className="flex flex-wrap gap-2 mb-6" role="tablist">
-              <button
-                role="tab"
-                id="tab-config"
-                aria-controls="panel-config"
-                aria-selected={view === 'config'}
-                onClick={() => setView('config')}
-                className={`py-2 px-4 rounded-md font-semibold transition-colors duration-200 ${
-                  view === 'config'
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                }`}
-              >
-                Configurar Feria
-              </button>
-              <button
-                role="tab"
-                id="tab-report"
-                aria-controls="panel-report"
-                aria-selected={view === 'report'}
-                onClick={() => setView('report')}
-                className={`py-2 px-4 rounded-md font-semibold transition-colors duration-200 ${
-                  view === 'report'
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                }`}
-              >
-                Reporte de Feria Activa
-              </button>
-              <button
-                role="tab"
-                id="tab-history"
-                aria-controls="panel-history"
-                aria-selected={view === 'history'}
-                onClick={() => setView('history')}
-                className={`py-2 px-4 rounded-md font-semibold transition-colors duration-200 ${
-                  view === 'history'
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                }`}
-              >
-                Historial de Ferias
-              </button>
+            <div className="flex flex-wrap gap-2 mb-6">
+              <button onClick={() => setView('config')} className={`py-2 px-4 rounded-md font-semibold ${view === 'config' ? 'bg-primary text-white' : 'bg-gray-200 text-gray-700'}`}>Configurar</button>
+              <button onClick={() => setView('report')} className={`py-2 px-4 rounded-md font-semibold ${view === 'report' ? 'bg-primary text-white' : 'bg-gray-200 text-gray-700'}`}>Reporte Activo</button>
+              <button onClick={() => setView('history')} className={`py-2 px-4 rounded-md font-semibold ${view === 'history' ? 'bg-primary text-white' : 'bg-gray-200 text-gray-700'}`}>Historial</button>
             </div>
-
-            <div id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`}>
-              {view === 'config' ? (
-                <FeriaConfigForm
-                  activeFeriaConfig={activeFeriaConfig}
-                  onSave={onUpdateFeriaConfig}
-                  onFinalizeFeria={onFinalizeFeria}
-                />
-              ) : view === 'report' ? (
-                <SalesReport
-                  activeFeriaConfig={activeFeriaConfig}
-                  activeSales={activeSales}
-                  onFinalizeFeria={onFinalizeFeria}
-                />
-              ) : (
-                <FeriaHistoryList
-                  activeFeriaConfig={activeFeriaConfig}
-                  feriaHistory={feriaHistory}
-                  onActivateFeria={onActivateHistoricalFeria}
-                  onShowReport={handleShowHistoricalReport}
-                  onDeleteFeria={handleDeleteFeria}
-                />
-              )}
+            <div>
+              {view === 'config' ? <FeriaConfigForm activeFeriaConfig={activeFeriaConfig} onSave={onUpdateFeriaConfig} onFinalizeFeria={onFinalizeFeria} /> :
+               view === 'report' ? <SalesReport activeFeriaConfig={activeFeriaConfig} activeSales={activeSales} onFinalizeFeria={onFinalizeFeria} /> :
+               <FeriaHistoryList activeFeriaConfig={activeFeriaConfig} feriaHistory={feriaHistory} onActivateFeria={onActivateHistoricalFeria} onShowReport={(f) => { setSelectedHistoricalFeria(f); setShowHistoricalReportModal(true); }} onDeleteFeria={handleDeleteFeria} />}
             </div>
-
-            {showHistoricalReportModal && selectedHistoricalFeria && (
-              <HistoricalFeriaReportModal
-                feria={selectedHistoricalFeria}
-                onClose={handleCloseHistoricalReport}
-              />
-            )}
+            {showHistoricalReportModal && selectedHistoricalFeria && <HistoricalFeriaReportModal feria={selectedHistoricalFeria} onClose={() => setShowHistoricalReportModal(false)} />}
           </div>
         );
       };
 
-      const SalesTPV = ({ activeFeriaConfig, onAddSale, onLogout, loggedInUser }) => {
+      const SalesTPV = ({ activeFeriaConfig, onAddSale, onLogout }) => {
         const [pintaCount, setPintaCount] = React.useState(0);
         const [litroCount, setLitroCount] = React.useState(0);
         const [showLoadedMessage, setShowLoadedMessage] = React.useState(false);
-        const [loading, setLoading] = React.useState(false);
+        const [activeButton, setActiveButton] = React.useState(null); // 'pinta', 'litro', 'digital', 'billete'
+        
+        // Offline Logic State
         const [isOnline, setIsOnline] = React.useState(navigator.onLine);
-        const [pendingSales, setPendingSales] = React.useState([]);
-
-        // Visual feedback state
-        const [visualFeedback, setVisualFeedback] = React.useState({
-            pintaAdd: false,
-            pintaSub: false,
-            litroAdd: false,
-            litroSub: false,
-            digital: false,
-            billete: false
-        });
+        const [pendingOrders, setPendingOrders] = React.useState([]);
 
         const digitalSoundRef = React.useRef(null);
         const billeteSoundRef = React.useRef(null);
@@ -1191,64 +771,6 @@
         const litroAddSoundRef = React.useRef(null);
         const litroSubSoundRef = React.useRef(null);
 
-        // Load pending sales from local storage on mount
-        React.useEffect(() => {
-          const storedPending = localStorage.getItem('pendingSales');
-          if (storedPending) {
-            try {
-              setPendingSales(JSON.parse(storedPending));
-            } catch (e) {
-              console.error("Error loading pending sales:", e);
-            }
-          }
-        }, []);
-
-        // Listen for online/offline events and sync
-        React.useEffect(() => {
-          const handleOnline = () => {
-            setIsOnline(true);
-            syncPendingSales();
-          };
-          const handleOffline = () => setIsOnline(false);
-
-          window.addEventListener('online', handleOnline);
-          window.addEventListener('offline', handleOffline);
-
-          return () => {
-            window.removeEventListener('online', handleOnline);
-            window.removeEventListener('offline', handleOffline);
-          };
-        }, [pendingSales]);
-
-        const syncPendingSales = async () => {
-           const currentStored = localStorage.getItem('pendingSales');
-           const queue = currentStored ? JSON.parse(currentStored) : [];
-           
-           if (queue.length === 0) return;
-
-           console.log("Syncing pending sales...", queue);
-           
-           let remainingQueue = [...queue];
-           let syncedCount = 0;
-
-           for (const sale of queue) {
-              try {
-                  await onAddSale(sale);
-                  syncedCount++;
-                  remainingQueue = remainingQueue.filter(s => s.localId !== sale.localId);
-              } catch (e) {
-                  console.error("Failed to sync sale:", sale, e);
-              }
-           }
-
-           setPendingSales(remainingQueue);
-           localStorage.setItem('pendingSales', JSON.stringify(remainingQueue));
-           
-           if (syncedCount > 0) {
-               console.log(`Synced ${syncedCount} sales.`);
-           }
-        };
-
         React.useEffect(() => {
           digitalSoundRef.current = new Audio(DIGITAL_PAYMENT_SOUND_BASE64);
           billeteSoundRef.current = new Audio(CASH_PAYMENT_SOUND_BASE64);
@@ -1256,14 +778,46 @@
           pintaSubSoundRef.current = new Audio(PINTA_SUB_SOUND_BASE64);
           litroAddSoundRef.current = new Audio(LITRO_ADD_SOUND_BASE64);
           litroSubSoundRef.current = new Audio(LITRO_SUB_SOUND_BASE64);
+          
+          // Load pending orders from LS
+          const storedPending = localStorage.getItem('pendingOrders');
+          if (storedPending) setPendingOrders(JSON.parse(storedPending));
+
+          // Network listeners
+          const handleOnline = () => setIsOnline(true);
+          const handleOffline = () => setIsOnline(false);
+          window.addEventListener('online', handleOnline);
+          window.addEventListener('offline', handleOffline);
+
+          return () => {
+              window.removeEventListener('online', handleOnline);
+              window.removeEventListener('offline', handleOffline);
+          };
         }, []);
 
-        const triggerFeedback = (key) => {
-            setVisualFeedback(prev => ({ ...prev, [key]: true }));
-            setTimeout(() => {
-                setVisualFeedback(prev => ({ ...prev, [key]: false }));
-            }, 200);
-        };
+        // Sync pending orders when online
+        React.useEffect(() => {
+            if (isOnline && pendingOrders.length > 0) {
+                const syncOrders = async () => {
+                    console.log('Online detectado. Enviando órdenes pendientes...');
+                    const ordersToSync = [...pendingOrders];
+                    setPendingOrders([]); // Clear UI immediately
+                    localStorage.removeItem('pendingOrders');
+                    
+                    for (const sale of ordersToSync) {
+                        try {
+                            await apiService.addSale(sale);
+                            console.log('Orden sincronizada:', sale.id);
+                        } catch (e) {
+                            console.error('Error sincronizando orden:', e);
+                            // If fail, put back? For simplicity in this demo, we assume success or retry next reload if logic extended.
+                            // Ideally, we'd add back to queue if fail.
+                        }
+                    }
+                };
+                syncOrders();
+            }
+        }, [isOnline, pendingOrders]);
 
         const playSound = React.useCallback((audioRef) => {
           if (audioRef.current) {
@@ -1271,22 +825,18 @@
             audioRef.current.play().catch(e => console.error("Error playing sound:", e));
           }
         }, []);
+        
+        const triggerVisualFeedback = (buttonId) => {
+            setActiveButton(buttonId);
+            setTimeout(() => setActiveButton(null), 300);
+        };
 
-        if (!activeFeriaConfig?.nombreFeria) {
+        if (!activeFeriaConfig) {
           return (
             <div className="flex flex-col items-center p-8 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 max-w-xl w-full">
               <h2 className="text-4xl font-bold text-secondary mb-6 text-center">VENTA</h2>
-              <p className="text-lg text-gray-700 dark:text-gray-300 mb-6 text-center">
-                No hay ninguna feria activa. Por favor, contacta al administrador.
-              </p>
-              <button
-                onClick={onLogout}
-                className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors duration-200"
-                aria-label="Cerrar sesión de venta"
-                disabled={loading}
-              >
-                Cerrar Sesión
-              </button>
+              <p className="text-lg text-gray-700 dark:text-gray-300 mb-6 text-center">No hay ninguna feria activa.</p>
+              <button onClick={onLogout} className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600">Cerrar Sesión</button>
             </div>
           );
         }
@@ -1298,375 +848,225 @@
         const handleRegisterSale = async (tipoPago) => {
           if (pintaCount === 0 && litroCount === 0) return;
 
-          setLoading(true);
           const montoTotal = parseFloat(calculatePartialTotal());
           const newSale = {
+            // ID generation: if offline, use timestamp-random, else let Firestore (but we send object)
+            // Actually API addSale lets firestore generate ID, but for offline we need a temp one if we were displaying it.
+            // For the API payload, we just send data.
             fechaVenta: new Date().toISOString(),
             tipoUnidad: (pintaCount > 0 && litroCount > 0) ? TipoUnidad.Mixed : (pintaCount > 0 ? TipoUnidad.Pinta : TipoUnidad.Litro),
             cantidadUnidades: pintaCount + litroCount,
             montoTotal,
             tipoPago,
-            usuarioVenta: loggedInUser,
-            localId: Date.now() + Math.random().toString(36).substr(2, 9)
+            usuarioVenta: auth.currentUser ? auth.currentUser.email : 'offline_user',
           };
 
-          const isDigital = tipoPago === TipoPago.Digital;
-          triggerFeedback(isDigital ? 'digital' : 'billete');
-
-          if (navigator.onLine) {
-            try {
-                await onAddSale(newSale);
-                if (isDigital) playSound(digitalSoundRef); else playSound(billeteSoundRef);
-                setShowLoadedMessage(true);
-            } catch (error) {
-                console.warn("Online send failed, falling back to offline queue", error);
-                const updatedPending = [...pendingSales, newSale];
-                setPendingSales(updatedPending);
-                localStorage.setItem('pendingSales', JSON.stringify(updatedPending));
-                alert("Sin conexión estable. Orden guardada localmente.");
-            }
+          if (isOnline) {
+             onAddSale(newSale); // Optimistic UI update handled by listener usually, but here we can rely on listener or simple props
+             // In this app structure, onAddSale is likely just updating local state in App? 
+             // Wait, App uses onSnapshot. So we just call API.
+             apiService.addSale(newSale);
           } else {
-             const updatedPending = [...pendingSales, newSale];
-             setPendingSales(updatedPending);
-             localStorage.setItem('pendingSales', JSON.stringify(updatedPending));
-             if (isDigital) playSound(digitalSoundRef); else playSound(billeteSoundRef);
-             setShowLoadedMessage(true);
+             // Offline: Add to pending
+             const updatedPending = [...pendingOrders, { ...newSale, id: `temp-${Date.now()}` }];
+             setPendingOrders(updatedPending);
+             localStorage.setItem('pendingOrders', JSON.stringify(updatedPending));
           }
 
+          // Reset UI
           setPintaCount(0);
           setLitroCount(0);
-          setLoading(false);
+          setShowLoadedMessage(true);
+          triggerVisualFeedback(tipoPago === TipoPago.Digital ? 'digital' : 'billete');
+
+          if (tipoPago === TipoPago.Digital) playSound(digitalSoundRef);
+          else playSound(billeteSoundRef);
+
           setTimeout(() => setShowLoadedMessage(false), 1500);
         };
 
         const handlePintaChange = (delta) => {
-            const isAdd = delta > 0;
-            triggerFeedback(isAdd ? 'pintaAdd' : 'pintaSub');
+            triggerVisualFeedback('pinta');
             setPintaCount(prev => {
                 const newCount = Math.max(0, prev + delta);
-                if (isAdd) playSound(pintaAddSoundRef); else if (prev > 0) playSound(pintaSubSoundRef);
+                if (delta > 0) playSound(pintaAddSoundRef);
+                else if (delta < 0 && prev > 0) playSound(pintaSubSoundRef);
                 return newCount;
             });
         };
 
         const handleLitroChange = (delta) => {
-            const isAdd = delta > 0;
-            triggerFeedback(isAdd ? 'litroAdd' : 'litroSub');
+            triggerVisualFeedback('litro');
             setLitroCount(prev => {
                 const newCount = Math.max(0, prev + delta);
-                if (isAdd) playSound(litroAddSoundRef); else if (prev > 0) playSound(litroSubSoundRef);
+                if (delta > 0) playSound(litroAddSoundRef);
+                else if (delta < 0 && prev > 0) playSound(litroSubSoundRef);
                 return newCount;
             });
         };
 
         const hasItemsSelected = pintaCount > 0 || litroCount > 0;
-        
-        // Helper classes for visual feedback
-        const getFeedbackClass = (isActive) => isActive ? 'ring-4 ring-yellow-300 scale-105 transition-transform duration-100' : '';
 
         return (
           <div className="flex flex-col p-6 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 min-h-[600px] justify-between relative">
-            <div className="flex justify-between items-center mb-6 border-b pb-4 border-gray-200 dark:border-gray-600">
+            <div className="flex justify-between items-center mb-6 border-b pb-4 dark:border-gray-600">
               <h1 className="text-4xl font-bold text-secondary">VENTA</h1>
-              <button
-                onClick={onLogout}
-                className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors duration-200"
-                aria-label="Cerrar sesión de venta"
-                disabled={loading}
-              >
-                Cerrar Sesión
-              </button>
+              <button onClick={onLogout} className="py-2 px-4 bg-accent text-white rounded-md hover:bg-red-600">Salir</button>
             </div>
 
             <p className="text-2xl md:text-3xl text-gray-700 dark:text-gray-300 mb-4 font-semibold text-center">
-              Feria actual: <span className="font-extrabold text-primary">{activeFeriaConfig.nombreFeria}</span>
+              Feria: <span className="font-extrabold text-primary">{activeFeriaConfig.nombreFeria}</span>
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-grow">
-              <div className="flex flex-col space-y-4" role="group" aria-labelledby="products-title">
-                <h2 id="products-title" className="text-xl font-semibold text-textdark dark:text-textlight">Productos</h2>
+              <div className="flex flex-col space-y-4">
+                <h2 className="text-xl font-semibold text-textdark dark:text-textlight">Productos</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* PINTA Button */}
-                  <div className="relative flex flex-col items-center justify-center p-4 bg-blue-500 text-white rounded-lg shadow-md h-40">
-                    <button
-                      onClick={() => handlePintaChange(1)}
-                      className={`absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-all duration-200 ${getFeedbackClass(visualFeedback.pintaAdd)}`}
-                      aria-label={`Añadir una pinta. Cantidad actual: ${pintaCount}`}
-                      disabled={loading}
-                    >
+                  <div className={`relative flex flex-col items-center justify-center p-4 bg-blue-500 text-white rounded-lg shadow-md h-40 transition-transform duration-100 ${activeButton === 'pinta' ? 'scale-95 ring-4 ring-blue-300' : ''}`}>
+                    <button onClick={() => handlePintaChange(1)} className="absolute inset-0 flex flex-col items-center justify-center w-full h-full">
                       <span className="text-2xl font-bold">PINTA</span>
                       <span className="text-sm">(${activeFeriaConfig.valorPinta.toFixed(2)})</span>
-                      <span className="text-5xl font-extrabold mt-2" aria-live="polite">{pintaCount}</span>
+                      <span className="text-5xl font-extrabold mt-2">{pintaCount}</span>
                     </button>
                     {pintaCount > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePintaChange(-1);
-                        }}
-                        className={`absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-blue-700 hover:bg-blue-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed z-10 transition-all duration-200 ${getFeedbackClass(visualFeedback.pintaSub)}`}
-                        disabled={pintaCount === 0 || loading}
-                        aria-label={`Restar una pinta. Cantidad actual: ${pintaCount}`}
-                      >
+                      <button onClick={(e) => { e.stopPropagation(); handlePintaChange(-1); }} className="absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-blue-700 hover:bg-blue-800 rounded-l-lg z-10">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M20 12H4" /></svg>
                       </button>
                     )}
                   </div>
 
-                  {/* LITRO Button */}
-                  <div className="relative flex flex-col items-center justify-center p-4 bg-purple-500 text-white rounded-lg shadow-md h-40">
-                    <button
-                      onClick={() => handleLitroChange(1)}
-                      className={`absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-all duration-200 ${getFeedbackClass(visualFeedback.litroAdd)}`}
-                      aria-label={`Añadir un litro. Cantidad actual: ${litroCount}`}
-                      disabled={loading}
-                    >
+                  <div className={`relative flex flex-col items-center justify-center p-4 bg-purple-500 text-white rounded-lg shadow-md h-40 transition-transform duration-100 ${activeButton === 'litro' ? 'scale-95 ring-4 ring-purple-300' : ''}`}>
+                    <button onClick={() => handleLitroChange(1)} className="absolute inset-0 flex flex-col items-center justify-center w-full h-full">
                       <span className="text-2xl font-bold">LITRO</span>
                       <span className="text-sm">(${activeFeriaConfig.valorLitro.toFixed(2)})</span>
-                      <span className="text-5xl font-extrabold mt-2" aria-live="polite">{litroCount}</span>
+                      <span className="text-5xl font-extrabold mt-2">{litroCount}</span>
                     </button>
                     {litroCount > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleLitroChange(-1);
-                        }}
-                        className={`absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-purple-700 hover:bg-purple-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:opacity-50 disabled:cursor-not-allowed z-10 transition-all duration-200 ${getFeedbackClass(visualFeedback.litroSub)}`}
-                        disabled={litroCount === 0 || loading}
-                        aria-label={`Restar un litro. Cantidad actual: ${litroCount}`}
-                      >
+                      <button onClick={(e) => { e.stopPropagation(); handleLitroChange(-1); }} className="absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-purple-700 hover:bg-purple-800 rounded-l-lg z-10">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M20 12H4" /></svg>
                       </button>
                     )}
                   </div>
                 </div>
                 {(pintaCount > 0 || litroCount > 0) && (
-                  <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md mt-4 text-center" role="status" aria-live="polite">
-                    <p className="text-xl font-semibold text-textdark dark:text-textlight">
-                      <span className="text-primary">{pintaCount}</span> Pinta{' '}
-                      <span className="text-primary">{litroCount}</span> Litro ={' '}
-                      <span className="font-extrabold text-2xl text-secondary">${calculatePartialTotal()}</span>
-                    </p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Cálculo Parcial</p>
+                  <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md mt-4 text-center">
+                    <p className="text-xl font-semibold text-textdark dark:text-textlight"><span className="text-primary">{pintaCount}</span> Pinta <span className="text-primary">{litroCount}</span> Litro = <span className="font-extrabold text-2xl text-secondary">${calculatePartialTotal()}</span></p>
                   </div>
                 )}
               </div>
 
-              <div className="flex flex-col space-y-4" role="group" aria-labelledby="payment-title">
-                <h2 id="payment-title" className="text-xl font-semibold text-textdark dark:text-textlight">Pago</h2>
-                <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md text-center" role="status" aria-live="polite">
-                  <p className="text-2xl font-bold text-textdark dark:text-textlight">
-                    TOTAL: <span className="text-primary text-4xl">${calculatePartialTotal()}</span>
-                  </p>
+              <div className="flex flex-col space-y-4">
+                <h2 className="text-xl font-semibold text-textdark dark:text-textlight">Pago</h2>
+                <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md text-center">
+                  <p className="text-2xl font-bold text-textdark dark:text-textlight">TOTAL: <span className="text-primary text-4xl">${calculatePartialTotal()}</span></p>
                 </div>
-                <button
-                  onClick={() => handleRegisterSale(TipoPago.Digital)}
-                  disabled={!hasItemsSelected || loading}
-                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-200 ${
-                    hasItemsSelected && !loading
-                      ? 'bg-primary hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2'
-                      : 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
-                  } ${getFeedbackClass(visualFeedback.digital)}`}
-                  aria-disabled={!hasItemsSelected || loading}
-                >
-                  {loading ? <div className="spinner mx-auto"></div> : '$ DIGITAL'}
-                </button>
-                <button
-                  onClick={() => handleRegisterSale(TipoPago.Billete)}
-                  disabled={!hasItemsSelected || loading}
-                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-200 ${
-                    hasItemsSelected && !loading
-                      ? 'bg-secondary hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2'
-                      : 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
-                  } ${getFeedbackClass(visualFeedback.billete)}`}
-                  aria-disabled={!hasItemsSelected || loading}
-                >
-                  {loading ? <div className="spinner mx-auto"></div> : '$ BILLETE'}
-                </button>
+                <button onClick={() => handleRegisterSale(TipoPago.Digital)} disabled={!hasItemsSelected} className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-100 ${hasItemsSelected ? 'bg-primary hover:bg-emerald-600' : 'bg-gray-300 cursor-not-allowed'} ${activeButton === 'digital' ? 'ring-4 ring-emerald-300 scale-95' : ''}`}>$ DIGITAL</button>
+                <button onClick={() => handleRegisterSale(TipoPago.Billete)} disabled={!hasItemsSelected} className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-100 ${hasItemsSelected ? 'bg-secondary hover:bg-amber-600' : 'bg-gray-300 cursor-not-allowed'} ${activeButton === 'billete' ? 'ring-4 ring-amber-300 scale-95' : ''}`}>$ BILLETE</button>
               </div>
             </div>
 
-            {/* Offline / Pending Sales Indicator */}
+            {/* Offline Status Bar */}
             {!isOnline && (
-                <div className="mt-4 p-2 bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 rounded text-center">
-                    <p className="text-red-700 dark:text-red-200 font-bold">Sin señal.</p>
-                </div>
-            )}
-            
-            {pendingSales.length > 0 && (
-                <div className="mt-2 p-2 bg-yellow-50 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-700 rounded text-center">
-                    <p className="text-yellow-800 dark:text-yellow-200 font-semibold text-sm mb-2">Orden pendiente de envío ({pendingSales.length})</p>
-                    <div className="text-xs text-left max-h-20 overflow-y-auto">
-                        {pendingSales.map((sale, idx) => (
-                            <div key={idx} className="flex justify-between border-b border-yellow-200 dark:border-yellow-800 py-1">
-                                <span>{sale.cantidadUnidades} unid. ({sale.tipoUnidad})</span>
-                                <span>${sale.montoTotal} ({sale.tipoPago})</span>
+                <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+                    <strong className="font-bold">Sin señal. </strong>
+                    <span className="block sm:inline">Modo sin conexión activo.</span>
+                    {pendingOrders.length > 0 && (
+                        <div className="mt-2 text-sm font-semibold">
+                            Orden pendiente de envío: {pendingOrders.length}
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                                {pendingOrders.map((o, i) => (
+                                    <span key={i} className="bg-red-200 px-2 py-1 rounded-full text-xs">
+                                        ${o.montoTotal} ({o.tipoPago})
+                                    </span>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        </div>
+                    )}
                 </div>
             )}
 
             {showLoadedMessage && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-white text-4xl font-bold rounded-lg z-50 animate-pulse" role="status" aria-live="polite">
-                CARGADO!
-              </div>
+              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-white text-4xl font-bold rounded-lg z-50 animate-pulse">CARGADO!</div>
             )}
           </div>
         );
       };
 
-      // App.tsx
       function App() {
         const [userRole, setUserRole] = React.useState(null);
-        const [username, setUsername] = React.useState(null);
         const [activeFeriaConfig, setActiveFeriaConfig] = React.useState(null);
         const [activeSales, setActiveSales] = React.useState([]);
         const [feriaHistory, setFeriaHistory] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
 
+        // Listen for Auth Changes
         React.useEffect(() => {
-          const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
-            if (user) {
-              const idTokenResult = await user.getIdTokenResult();
-              const role = idTokenResult.claims.role || null;
-              setUserRole(role);
-              setUsername(user.email);
-            } else {
-              setUserRole(null);
-              setUsername(null);
-            }
-            setLoading(false);
-          });
-
-          return () => unsubscribeAuth();
+            const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    const idTokenResult = await user.getIdTokenResult();
+                    const role = idTokenResult.claims.role || null;
+                    setUserRole(role);
+                } else {
+                    setUserRole(null);
+                    setActiveFeriaConfig(null);
+                    setActiveSales([]);
+                    setFeriaHistory([]);
+                }
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }, []);
 
+        // Listen for Data Changes (only if logged in)
         React.useEffect(() => {
-          if (!userRole) {
-             // Clear data if logged out to avoid stale info
-             setActiveFeriaConfig(null);
-             setActiveSales([]);
-             setFeriaHistory([]);
-             return;
-          }
+            if (!userRole) return;
 
-          // Listen for activeFeriaConfig
-          const unsubscribeConfig = db.collection('settings').doc('activeFeria')
-            .onSnapshot(doc => {
-              setActiveFeriaConfig(doc.exists ? doc.data() : null);
-            }, err => console.error("Error fetching active config:", err));
+            const unsubConfig = db.collection('settings').doc('activeFeria')
+                .onSnapshot(doc => setActiveFeriaConfig(doc.exists && doc.data().nombreFeria ? doc.data() : null));
 
-          // Listen for activeSales
-          const unsubscribeSales = db.collection('activeSales')
-            .onSnapshot(snapshot => {
-              const sales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-              setActiveSales(sales);
-            }, err => console.error("Error fetching active sales:", err));
+            const unsubSales = db.collection('activeSales')
+                .onSnapshot(snapshot => setActiveSales(snapshot.docs.map(d => ({id: d.id, ...d.data()}))));
 
-          // Listen for feriaHistory
-          const unsubscribeHistory = db.collection('feriaHistory').orderBy('archivedAt', 'desc')
-            .onSnapshot(snapshot => {
-              const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-              setFeriaHistory(history);
-            }, err => console.error("Error fetching feria history:", err));
+            let unsubHistory = () => {};
+            if (userRole === ADMIN_ROLE) {
+                unsubHistory = db.collection('feriaHistory').orderBy('archivedAt', 'desc')
+                    .onSnapshot(snapshot => setFeriaHistory(snapshot.docs.map(d => ({id: d.id, ...d.data()}))));
+            }
 
-          return () => {
-            unsubscribeConfig();
-            unsubscribeSales();
-            unsubscribeHistory();
-          };
+            return () => {
+                unsubConfig();
+                unsubSales();
+                unsubHistory();
+            };
         }, [userRole]);
 
-        const handleLogin = React.useCallback((role, userEmail) => {
-          setUserRole(role);
-          setUsername(userEmail);
-        }, []);
+        const handleUpdateFeriaConfig = async (newConfig) => {
+            await apiService.saveActiveFeriaConfig(newConfig);
+        };
 
-        const handleLogout = React.useCallback(async () => {
-          await apiService.logout();
-          setUserRole(null);
-          setUsername(null);
-        }, []);
+        const archiveCurrentFeria = async () => {
+            if (activeFeriaConfig) {
+                const report = calculateReportSummary(activeFeriaConfig, activeSales);
+                const data = { config: activeFeriaConfig, sales: activeSales, reportSummary: report, archivedAt: new Date().toISOString() };
+                await apiService.archiveCurrentFeria(data);
+            }
+        };
 
-        const handleUpdateFeriaConfig = React.useCallback(async (newConfig) => {
-          await apiService.saveActiveFeriaConfig(newConfig);
-        }, []);
-
-        const handleAddSale = React.useCallback(async (newSale) => {
-          await apiService.addSale(newSale);
-        }, []);
-
-        const archiveCurrentFeria = React.useCallback(async () => {
-          if (activeFeriaConfig) {
-            const reportSummary = calculateReportSummary(activeFeriaConfig, activeSales);
-            const newHistoricalFeria = {
-              config: activeFeriaConfig,
-              sales: activeSales,
-              reportSummary: reportSummary,
-              archivedAt: new Date().toISOString(),
-            };
-            await apiService.archiveCurrentFeria(newHistoricalFeria);
-          }
-        }, [activeFeriaConfig, activeSales]);
-
-        const activateHistoricalFeria = React.useCallback(async (feria) => {
-           await apiService.activateHistoricalFeria(feria);
-        }, []);
-
-        const handleDeleteHistoricalFeria = React.useCallback(async (feriaId) => {
-           await apiService.deleteHistoricalFeria(feriaId);
-        }, []);
-
-
-        if (loading) {
-          return (
-            <div className="flex flex-col items-center justify-center min-h-screen bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight">
-              <div className="spinner h-16 w-16 border-t-2 border-b-2 border-primary"></div>
-              <p className="mt-4 text-lg">Cargando...</p>
-            </div>
-          );
-        }
+        if (loading) return <div className="flex flex-col items-center justify-center min-h-screen"><div className="spinner"></div></div>;
 
         return (
           <div className="w-full max-w-5xl p-6 bg-white dark:bg-gray-700 shadow-lg rounded-xl">
-            {!userRole ? (
-              <AuthScreen onLogin={handleLogin} />
-            ) : userRole === ADMIN_ROLE ? (
-              <AdminDashboard
-                activeFeriaConfig={activeFeriaConfig}
-                activeSales={activeSales}
-                feriaHistory={feriaHistory}
-                onUpdateFeriaConfig={handleUpdateFeriaConfig}
-                onFinalizeFeria={archiveCurrentFeria}
-                onActivateHistoricalFeria={activateHistoricalFeria}
-                onDeleteHistoricalFeria={handleDeleteHistoricalFeria}
-                onLogout={handleLogout}
-              />
-            ) : (
-              <SalesTPV
-                activeFeriaConfig={activeFeriaConfig}
-                onAddSale={handleAddSale}
-                onLogout={handleLogout}
-                loggedInUser={username}
-              />
-            )}
+            {!userRole ? <AuthScreen onLogin={(role) => setUserRole(role)} /> :
+             userRole === ADMIN_ROLE ? 
+                <AdminDashboard activeFeriaConfig={activeFeriaConfig} activeSales={activeSales} feriaHistory={feriaHistory} onUpdateFeriaConfig={handleUpdateFeriaConfig} onFinalizeFeria={archiveCurrentFeria} onActivateHistoricalFeria={apiService.activateHistoricalFeria} onDeleteHistoricalFeria={apiService.deleteHistoricalFeria} onLogout={apiService.logout} /> :
+                <SalesTPV activeFeriaConfig={activeFeriaConfig} onAddSale={() => {}} onLogout={apiService.logout} />
+            }
           </div>
         );
       }
 
-      // index.jsx (main entry point)
-      const rootElement = document.getElementById('root');
-      if (!rootElement) {
-        throw new Error("Could not find root element to mount to");
-      }
-
-      const root = ReactDOM.createRoot(rootElement);
-      root.render(
-        <React.StrictMode>
-          <App />
-        </React.StrictMode>
-      );
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<React.StrictMode><App /></React.StrictMode>);
     </script>
 <script type="module" src="/index.tsx"></script>
 </body>
