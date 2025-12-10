@@ -19,6 +19,15 @@
                         lightbg: '#F3F4F6', // Gray 100
                         textlight: '#F9FAFB', // Gray 50
                         textdark: '#111827', // Gray 900
+                    },
+                    keyframes: {
+                        pulseCustom: {
+                            '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+                            '50%': { opacity: .8, transform: 'scale(0.95)' },
+                        }
+                    },
+                    animation: {
+                        pulseCustom: 'pulseCustom 0.2s ease-in-out',
                     }
                 }
             }
@@ -211,21 +220,26 @@
         activateHistoricalFeria: async (feriaToActivate) => {
             const batch = db.batch();
 
-            // Move config from history to active
-            const oldHistoryRef = db.collection('feriaHistory').doc(feriaToActivate.id);
-            batch.delete(oldHistoryRef);
-
+            // 1. Move config from history to active
             const activeFeriaRef = db.collection('settings').doc('activeFeria');
             batch.set(activeFeriaRef, feriaToActivate.config);
 
-            // Overwrite active sales with historical sales
+            // 2. Clear current active sales (safeguard)
             const currentActiveSalesSnapshot = await db.collection('activeSales').get();
-            currentActiveSalesSnapshot.docs.forEach(doc => batch.delete(doc.ref)); // Clear existing
+            currentActiveSalesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+
+            // 3. Restore historical sales to active collection
+            // We create NEW documents for them to avoid ID conflicts if any
             feriaToActivate.sales.forEach(sale => {
                 const newSaleRef = db.collection('activeSales').doc();
-                batch.set(newSaleRef, sale); // Add historical sales
+                // Ensure we don't copy the old ID
+                const { id, ...saleData } = sale;
+                batch.set(newSaleRef, saleData);
             });
 
+            // 4. Delete from history (since it's now active)
+            const oldHistoryRef = db.collection('feriaHistory').doc(feriaToActivate.id);
+            batch.delete(oldHistoryRef);
 
             await batch.commit();
             return true;
@@ -272,12 +286,19 @@
         };
       };
 
-      // --- Components (inlined and adjusted from components/*.tsx, without type annotations) ---
+      // --- Components ---
 
       const AuthScreen = ({ onLogin }) => {
         const [usernameInput, setUsernameInput] = React.useState('');
         const [error, setError] = React.useState(null);
         const [loading, setLoading] = React.useState(false);
+        const [showManualLogin, setShowManualLogin] = React.useState(false);
+        const [manualEmail, setManualEmail] = React.useState('');
+        const [manualPassword, setManualPassword] = React.useState('');
+
+        const normalizedInput = usernameInput.trim().toLowerCase();
+        const isAdminInput = normalizedInput === 'regis';
+        const isSalesInput = normalizedInput === 'lol';
 
         const doLogin = async (email, password, expectedRole) => {
             setLoading(true);
@@ -298,17 +319,14 @@
             }
         };
 
-        const handleAdminLogin = () => {
-            doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE);
+        const handleManualLogin = (e) => {
+            e.preventDefault();
+            if (!manualEmail || !manualPassword) {
+                setError('Por favor completa todos los campos.');
+                return;
+            }
+            doLogin(manualEmail, manualPassword, null);
         };
-
-        const handleSalesLogin = () => {
-            // Validation of active feria is now done in SalesTPV component after login
-            doLogin(SALES_USER_EMAIL, SALES_USER_PASSWORD, SALES_ROLE);
-        };
-
-        const isRegis = usernameInput.trim() === 'regis';
-        const isLol = usernameInput.trim() === 'lol';
 
         return (
           <div className="flex flex-col items-center p-8 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 max-w-2xl w-full">
@@ -328,6 +346,8 @@
                     onChange={(e) => {
                         setUsernameInput(e.target.value);
                         setError(null);
+                        // Reset manual login visibility if input is cleared
+                        if(e.target.value === '') setShowManualLogin(false);
                     }}
                     disabled={loading}
                     className="w-full p-4 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight text-textdark text-center text-xl"
@@ -347,23 +367,62 @@
                 </div>
             )}
 
-            {/* Hidden buttons that appear only when specific username is typed */}
-            {isRegis && !loading && (
+            {/* Conditional Buttons based on input */}
+            {isAdminInput && !loading && (
                  <button
-                    onClick={handleAdminLogin}
-                    className="w-full py-3 px-6 bg-primary text-white rounded-md font-semibold hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors animate-fade-in mt-4"
-                >
-                    Entrar como ADMINISTRADOR
-                </button>
+                    onClick={() => doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE)}
+                    className="w-full py-3 px-6 bg-primary text-white rounded-md font-semibold hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors animate-fade-in mb-4"
+                 >
+                    ENTRAR COMO ADMINISTRADOR
+                 </button>
             )}
 
-            {isLol && !loading && (
+            {isSalesInput && !loading && (
                  <button
-                    onClick={handleSalesLogin}
-                    className="w-full py-3 px-6 bg-secondary text-white rounded-md font-semibold hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-colors animate-fade-in mt-4"
-                >
-                    Entrar como VENDEDOR
-                </button>
+                    onClick={() => doLogin(SALES_USER_EMAIL, SALES_USER_PASSWORD, SALES_ROLE)}
+                    className="w-full py-3 px-6 bg-secondary text-white rounded-md font-semibold hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-colors animate-fade-in mb-4"
+                 >
+                    ENTRAR COMO VENDEDOR
+                 </button>
+            )}
+
+            {/* Manual Login Trigger for other users */}
+            {!isAdminInput && !isSalesInput && usernameInput.length > 0 && !loading && (
+                <div className="w-full mt-2 animate-fade-in">
+                    {!showManualLogin ? (
+                        <button 
+                            onClick={() => { setShowManualLogin(true); setManualEmail(usernameInput); }}
+                            className="text-sm text-gray-500 hover:text-gray-700 underline w-full text-center"
+                        >
+                            ¿No eres regis ni lol? Iniciar sesión manual
+                        </button>
+                    ) : (
+                        <form onSubmit={handleManualLogin} className="w-full border-t pt-4 border-gray-200 dark:border-gray-600">
+                             <div className="mb-3">
+                                 <input
+                                    type="email"
+                                    placeholder="Correo electrónico"
+                                    value={manualEmail}
+                                    onChange={(e) => setManualEmail(e.target.value)}
+                                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight mb-3"
+                                 />
+                                 <input
+                                    type="password"
+                                    placeholder="Contraseña"
+                                    value={manualPassword}
+                                    onChange={(e) => setManualPassword(e.target.value)}
+                                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary dark:bg-gray-700 dark:text-textlight"
+                                 />
+                             </div>
+                             <button
+                                type="submit"
+                                className="w-full py-3 px-6 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                             >
+                                Iniciar Sesión Manual
+                             </button>
+                        </form>
+                    )}
+                </div>
             )}
             
           </div>
@@ -570,7 +629,7 @@
       const SalesReport = ({ activeFeriaConfig, activeSales, onFinalizeFeria }) => {
         const [loading, setLoading] = React.useState(false);
 
-        if (!activeFeriaConfig?.nombreFeria) { // Check for activeFeriaConfig.nombreFeria
+        if (!activeFeriaConfig?.nombreFeria) {
           return (
             <div className="p-6 text-center text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-md">
               <p className="text-xl font-medium mb-4">¡Atención Administrador!</p>
@@ -682,7 +741,7 @@
       };
 
       const FeriaHistoryList = ({ activeFeriaConfig, feriaHistory, onActivateFeria, onShowReport, onDeleteFeria }) => {
-        const [loadingId, setLoadingId] = React.useState(null); // Track which item is loading
+        const [loadingId, setLoadingId] = React.useState(null);
 
         if (feriaHistory.length === 0) {
           return (
@@ -694,6 +753,11 @@
         }
 
         const handleActivateClick = async (feria) => {
+           if (activeFeriaConfig?.nombreFeria) {
+              if (!window.confirm('¡ADVERTENCIA! Ya hay una feria activa. Activar esta feria antigua reemplazará la configuración actual y BORRARÁ las ventas activas actuales si no han sido archivadas. ¿Deseas continuar?')) {
+                  return;
+              }
+           }
           setLoadingId(feria.id);
           try {
             await onActivateFeria(feria);
@@ -751,16 +815,11 @@
                     </button>
                     <button
                       onClick={() => handleActivateClick(feria)}
-                      disabled={(activeFeriaConfig?.nombreFeria === feria.config.nombreFeria) || loadingId === feria.id}
-                      className={`py-2 px-4 rounded-md font-semibold transition-colors duration-200 text-sm ${
-                        (activeFeriaConfig?.nombreFeria === feria.config.nombreFeria)
-                            ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
-                            : 'bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2'
-                      }`}
+                      disabled={loadingId === feria.id}
+                      className="py-2 px-4 rounded-md font-semibold transition-colors duration-200 text-sm bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2"
                       aria-label={`Activar ${feria.config.nombreFeria} como feria actual`}
-                      aria-disabled={(activeFeriaConfig?.nombreFeria === feria.config.nombreFeria) || loadingId === feria.id}
                     >
-                      {loadingId === feria.id ? <div className="spinner w-4 h-4 border-white mx-auto"></div> : ((activeFeriaConfig?.nombreFeria === feria.config.nombreFeria) ? 'Feria Activa' : 'Activar')}
+                      {loadingId === feria.id ? <div className="spinner w-4 h-4 border-white mx-auto"></div> : 'Activar'}
                     </button>
                   </div>
                 </li>
@@ -981,24 +1040,21 @@
         onDeleteHistoricalFeria,
         onLogout,
       }) => {
-        const [view, setView] = React.useState('config'); // Default to config when admin logs in
+        const [view, setView] = React.useState('config');
         const [showHistoricalReportModal, setShowHistoricalReportModal] = React.useState(false);
         const [selectedHistoricalFeria, setSelectedHistoricalFeria] = React.useState(null);
 
         React.useEffect(() => {
-            // If activeFeriaConfig changes (e.g., gets archived or activated),
-            // ensure the view is appropriate. If no active config, default to 'config'.
-            // If an active config exists, can default to 'report'.
-            if (!activeFeriaConfig?.nombreFeria) { // Use nombreFeria to check if config is meaningful
+            if (!activeFeriaConfig?.nombreFeria) {
                 setView('config');
-            } else if (view === 'config' || view === 'history') { // If admin was on config or history and a feria is now active, move to report
+            } else if (view === 'config' || view === 'history') {
                 setView('report');
             }
         }, [activeFeriaConfig]);
 
 
         const handleDeleteFeria = (feriaId) => {
-           onDeleteHistoricalFeria(feriaId); // Confirmation is handled in FeriaHistoryList
+           onDeleteHistoricalFeria(feriaId);
         };
 
         const handleShowHistoricalReport = (feria) => {
@@ -1108,6 +1164,18 @@
         const [litroCount, setLitroCount] = React.useState(0);
         const [showLoadedMessage, setShowLoadedMessage] = React.useState(false);
         const [loading, setLoading] = React.useState(false);
+        const [isOnline, setIsOnline] = React.useState(navigator.onLine);
+        const [pendingSales, setPendingSales] = React.useState([]);
+
+        // Visual feedback state
+        const [visualFeedback, setVisualFeedback] = React.useState({
+            pintaAdd: false,
+            pintaSub: false,
+            litroAdd: false,
+            litroSub: false,
+            digital: false,
+            billete: false
+        });
 
         const digitalSoundRef = React.useRef(null);
         const billeteSoundRef = React.useRef(null);
@@ -1115,6 +1183,64 @@
         const pintaSubSoundRef = React.useRef(null);
         const litroAddSoundRef = React.useRef(null);
         const litroSubSoundRef = React.useRef(null);
+
+        // Load pending sales from local storage on mount
+        React.useEffect(() => {
+          const storedPending = localStorage.getItem('pendingSales');
+          if (storedPending) {
+            try {
+              setPendingSales(JSON.parse(storedPending));
+            } catch (e) {
+              console.error("Error loading pending sales:", e);
+            }
+          }
+        }, []);
+
+        // Listen for online/offline events and sync
+        React.useEffect(() => {
+          const handleOnline = () => {
+            setIsOnline(true);
+            syncPendingSales();
+          };
+          const handleOffline = () => setIsOnline(false);
+
+          window.addEventListener('online', handleOnline);
+          window.addEventListener('offline', handleOffline);
+
+          return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+          };
+        }, [pendingSales]);
+
+        const syncPendingSales = async () => {
+           const currentStored = localStorage.getItem('pendingSales');
+           const queue = currentStored ? JSON.parse(currentStored) : [];
+           
+           if (queue.length === 0) return;
+
+           console.log("Syncing pending sales...", queue);
+           
+           let remainingQueue = [...queue];
+           let syncedCount = 0;
+
+           for (const sale of queue) {
+              try {
+                  await onAddSale(sale);
+                  syncedCount++;
+                  remainingQueue = remainingQueue.filter(s => s.localId !== sale.localId);
+              } catch (e) {
+                  console.error("Failed to sync sale:", sale, e);
+              }
+           }
+
+           setPendingSales(remainingQueue);
+           localStorage.setItem('pendingSales', JSON.stringify(remainingQueue));
+           
+           if (syncedCount > 0) {
+               console.log(`Synced ${syncedCount} sales.`);
+           }
+        };
 
         React.useEffect(() => {
           digitalSoundRef.current = new Audio(DIGITAL_PAYMENT_SOUND_BASE64);
@@ -1125,6 +1251,13 @@
           litroSubSoundRef.current = new Audio(LITRO_SUB_SOUND_BASE64);
         }, []);
 
+        const triggerFeedback = (key) => {
+            setVisualFeedback(prev => ({ ...prev, [key]: true }));
+            setTimeout(() => {
+                setVisualFeedback(prev => ({ ...prev, [key]: false }));
+            }, 200);
+        };
+
         const playSound = React.useCallback((audioRef) => {
           if (audioRef.current) {
             audioRef.current.currentTime = 0;
@@ -1132,7 +1265,7 @@
           }
         }, []);
 
-        if (!activeFeriaConfig?.nombreFeria) { // Check for activeFeriaConfig.nombreFeria
+        if (!activeFeriaConfig?.nombreFeria) {
           return (
             <div className="flex flex-col items-center p-8 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 max-w-xl w-full">
               <h2 className="text-4xl font-bold text-secondary mb-6 text-center">VENTA</h2>
@@ -1161,59 +1294,68 @@
           setLoading(true);
           const montoTotal = parseFloat(calculatePartialTotal());
           const newSale = {
-            // Firebase Firestore generará el ID del documento automáticamente al llamar a .add()
             fechaVenta: new Date().toISOString(),
             tipoUnidad: (pintaCount > 0 && litroCount > 0) ? TipoUnidad.Mixed : (pintaCount > 0 ? TipoUnidad.Pinta : TipoUnidad.Litro),
             cantidadUnidades: pintaCount + litroCount,
             montoTotal,
             tipoPago,
-            usuarioVenta: loggedInUser, // Use the actual logged-in user
+            usuarioVenta: loggedInUser,
+            localId: Date.now() + Math.random().toString(36).substr(2, 9)
           };
 
-          try {
-            await onAddSale(newSale);
-            setPintaCount(0);
-            setLitroCount(0);
-            setShowLoadedMessage(true);
+          const isDigital = tipoPago === TipoPago.Digital;
+          triggerFeedback(isDigital ? 'digital' : 'billete');
 
-            if (tipoPago === TipoPago.Digital) {
-              playSound(digitalSoundRef);
-            } else {
-              playSound(billeteSoundRef);
+          if (navigator.onLine) {
+            try {
+                await onAddSale(newSale);
+                if (isDigital) playSound(digitalSoundRef); else playSound(billeteSoundRef);
+                setShowLoadedMessage(true);
+            } catch (error) {
+                console.warn("Online send failed, falling back to offline queue", error);
+                const updatedPending = [...pendingSales, newSale];
+                setPendingSales(updatedPending);
+                localStorage.setItem('pendingSales', JSON.stringify(updatedPending));
+                alert("Sin conexión estable. Orden guardada localmente.");
             }
-            setTimeout(() => setShowLoadedMessage(false), 1500);
-          } catch (error) {
-            alert('Error al registrar la venta: ' + error.message);
-          } finally {
-            setLoading(false);
+          } else {
+             const updatedPending = [...pendingSales, newSale];
+             setPendingSales(updatedPending);
+             localStorage.setItem('pendingSales', JSON.stringify(updatedPending));
+             if (isDigital) playSound(digitalSoundRef); else playSound(billeteSoundRef);
+             setShowLoadedMessage(true);
           }
+
+          setPintaCount(0);
+          setLitroCount(0);
+          setLoading(false);
+          setTimeout(() => setShowLoadedMessage(false), 1500);
         };
 
         const handlePintaChange = (delta) => {
+            const isAdd = delta > 0;
+            triggerFeedback(isAdd ? 'pintaAdd' : 'pintaSub');
             setPintaCount(prev => {
                 const newCount = Math.max(0, prev + delta);
-                if (delta > 0) {
-                  playSound(pintaAddSoundRef);
-                } else if (delta < 0 && prev > 0) {
-                  playSound(pintaSubSoundRef);
-                }
+                if (isAdd) playSound(pintaAddSoundRef); else if (prev > 0) playSound(pintaSubSoundRef);
                 return newCount;
             });
         };
 
         const handleLitroChange = (delta) => {
+            const isAdd = delta > 0;
+            triggerFeedback(isAdd ? 'litroAdd' : 'litroSub');
             setLitroCount(prev => {
                 const newCount = Math.max(0, prev + delta);
-                if (delta > 0) {
-                  playSound(litroAddSoundRef);
-                } else if (delta < 0 && prev > 0) {
-                  playSound(litroSubSoundRef);
-                }
+                if (isAdd) playSound(litroAddSoundRef); else if (prev > 0) playSound(litroSubSoundRef);
                 return newCount;
             });
         };
 
         const hasItemsSelected = pintaCount > 0 || litroCount > 0;
+        
+        // Helper classes for visual feedback
+        const getFeedbackClass = (isActive) => isActive ? 'ring-4 ring-yellow-300 scale-105 transition-transform duration-100' : '';
 
         return (
           <div className="flex flex-col p-6 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-600 min-h-[600px] justify-between relative">
@@ -1239,10 +1381,9 @@
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* PINTA Button */}
                   <div className="relative flex flex-col items-center justify-center p-4 bg-blue-500 text-white rounded-lg shadow-md h-40">
-                    {/* Main clickable area for adding */}
                     <button
                       onClick={() => handlePintaChange(1)}
-                      className="absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-colors duration-200"
+                      className={`absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-all duration-200 ${getFeedbackClass(visualFeedback.pintaAdd)}`}
                       aria-label={`Añadir una pinta. Cantidad actual: ${pintaCount}`}
                       disabled={loading}
                     >
@@ -1250,14 +1391,13 @@
                       <span className="text-sm">(${activeFeriaConfig.valorPinta.toFixed(2)})</span>
                       <span className="text-5xl font-extrabold mt-2" aria-live="polite">{pintaCount}</span>
                     </button>
-                    {/* Minus button on the far left */}
                     {pintaCount > 0 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handlePintaChange(-1);
                         }}
-                        className="absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-blue-700 hover:bg-blue-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed z-10"
+                        className={`absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-blue-700 hover:bg-blue-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed z-10 transition-all duration-200 ${getFeedbackClass(visualFeedback.pintaSub)}`}
                         disabled={pintaCount === 0 || loading}
                         aria-label={`Restar una pinta. Cantidad actual: ${pintaCount}`}
                       >
@@ -1268,10 +1408,9 @@
 
                   {/* LITRO Button */}
                   <div className="relative flex flex-col items-center justify-center p-4 bg-purple-500 text-white rounded-lg shadow-md h-40">
-                    {/* Main clickable area for adding */}
                     <button
                       onClick={() => handleLitroChange(1)}
-                      className="absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-colors duration-200"
+                      className={`absolute inset-0 flex flex-col items-center justify-center w-full h-full text-white rounded-lg hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-all duration-200 ${getFeedbackClass(visualFeedback.litroAdd)}`}
                       aria-label={`Añadir un litro. Cantidad actual: ${litroCount}`}
                       disabled={loading}
                     >
@@ -1279,14 +1418,13 @@
                       <span className="text-sm">(${activeFeriaConfig.valorLitro.toFixed(2)})</span>
                       <span className="text-5xl font-extrabold mt-2" aria-live="polite">{litroCount}</span>
                     </button>
-                    {/* Minus button on the far left */}
                     {litroCount > 0 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleLitroChange(-1);
                         }}
-                        className="absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-purple-700 hover:bg-purple-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:opacity-50 disabled:cursor-not-allowed z-10"
+                        className={`absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-center bg-purple-700 hover:bg-purple-800 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:opacity-50 disabled:cursor-not-allowed z-10 transition-all duration-200 ${getFeedbackClass(visualFeedback.litroSub)}`}
                         disabled={litroCount === 0 || loading}
                         aria-label={`Restar un litro. Cantidad actual: ${litroCount}`}
                       >
@@ -1317,11 +1455,11 @@
                 <button
                   onClick={() => handleRegisterSale(TipoPago.Digital)}
                   disabled={!hasItemsSelected || loading}
-                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-colors duration-200 ${
+                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-200 ${
                     hasItemsSelected && !loading
                       ? 'bg-primary hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2'
                       : 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
-                  }`}
+                  } ${getFeedbackClass(visualFeedback.digital)}`}
                   aria-disabled={!hasItemsSelected || loading}
                 >
                   {loading ? <div className="spinner mx-auto"></div> : '$ DIGITAL'}
@@ -1329,17 +1467,38 @@
                 <button
                   onClick={() => handleRegisterSale(TipoPago.Billete)}
                   disabled={!hasItemsSelected || loading}
-                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-colors duration-200 ${
+                  className={`w-full py-4 px-6 rounded-md font-extrabold text-white text-xl transition-all duration-200 ${
                     hasItemsSelected && !loading
                       ? 'bg-secondary hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2'
                       : 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
-                  }`}
+                  } ${getFeedbackClass(visualFeedback.billete)}`}
                   aria-disabled={!hasItemsSelected || loading}
                 >
                   {loading ? <div className="spinner mx-auto"></div> : '$ BILLETE'}
                 </button>
               </div>
             </div>
+
+            {/* Offline / Pending Sales Indicator */}
+            {!isOnline && (
+                <div className="mt-4 p-2 bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 rounded text-center">
+                    <p className="text-red-700 dark:text-red-200 font-bold">Sin señal.</p>
+                </div>
+            )}
+            
+            {pendingSales.length > 0 && (
+                <div className="mt-2 p-2 bg-yellow-50 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-700 rounded text-center">
+                    <p className="text-yellow-800 dark:text-yellow-200 font-semibold text-sm mb-2">Orden pendiente de envío ({pendingSales.length})</p>
+                    <div className="text-xs text-left max-h-20 overflow-y-auto">
+                        {pendingSales.map((sale, idx) => (
+                            <div key={idx} className="flex justify-between border-b border-yellow-200 dark:border-yellow-800 py-1">
+                                <span>{sale.cantidadUnidades} unid. ({sale.tipoUnidad})</span>
+                                <span>${sale.montoTotal} ({sale.tipoPago})</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {showLoadedMessage && (
               <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-white text-4xl font-bold rounded-lg z-50 animate-pulse" role="status" aria-live="polite">
@@ -1350,155 +1509,89 @@
         );
       };
 
-      // --- App.tsx (main application component, inlined and adjusted) ---
+      // App.tsx
       function App() {
         const [userRole, setUserRole] = React.useState(null);
-        const [loggedInUser, setLoggedInUser] = React.useState(null); // Track actual username (email)
+        const [username, setUsername] = React.useState(null);
         const [activeFeriaConfig, setActiveFeriaConfig] = React.useState(null);
         const [activeSales, setActiveSales] = React.useState([]);
         const [feriaHistory, setFeriaHistory] = React.useState([]);
         const [loading, setLoading] = React.useState(true);
-        const [error, setError] = React.useState(null);
 
-        // Firebase Auth State Listener
         React.useEffect(() => {
           const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
             if (user) {
-              try {
-                // Get custom claims to determine role
-                const idTokenResult = await user.getIdTokenResult(true);
-                const role = idTokenResult.claims.role || null;
-                setUserRole(role);
-                setLoggedInUser(user.email);
-                setError(null);
-                // Set initial loading state for data fetching after login
-                setLoading(true);
-              } catch (err) {
-                console.error("Error getting user claims:", err);
-                setError("Error al obtener el rol de usuario.");
-                setUserRole(null);
-                setLoggedInUser(null);
-                setLoading(false); // Auth state resolved with error
-              }
+              const idTokenResult = await user.getIdTokenResult();
+              const role = idTokenResult.claims.role || null;
+              setUserRole(role);
+              setUsername(user.email);
             } else {
-              // No user is signed in.
               setUserRole(null);
-              setLoggedInUser(null);
-              setActiveFeriaConfig(null);
-              setActiveSales([]);
-              setFeriaHistory([]);
-              setError(null);
-              setLoading(false); // Auth state resolved
+              setUsername(null);
             }
+            setLoading(false);
           });
 
-          return () => unsubscribeAuth(); // Cleanup auth listener
+          return () => unsubscribeAuth();
         }, []);
 
-
-        // Firestore Real-time Listeners
         React.useEffect(() => {
-          let unsubscribeConfig = () => {};
-          let unsubscribeSales = () => {};
-          let unsubscribeHistory = () => {};
-
-          if (userRole) { // Only set up listeners if a user is logged in
-            // Active Feria Config Listener
-            unsubscribeConfig = db.collection('settings').doc('activeFeria')
-              .onSnapshot(doc => {
-                if (doc.exists && doc.data()?.nombreFeria) { // Check for nombreFeria to ensure it's a valid active config
-                  setActiveFeriaConfig({ id: doc.id, ...doc.data() });
-                } else {
-                  setActiveFeriaConfig(null);
-                }
-                setLoading(false); // Initial data load for config done
-                setError(null);
-              }, err => {
-                console.error("Error fetching active feria config:", err);
-                setError("Error al cargar la configuración de la feria activa.");
-                setLoading(false); // Error occurred during data load
-              });
-
-            // Active Sales Listener
-            unsubscribeSales = db.collection('activeSales')
-              .onSnapshot(snapshot => {
-                const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setActiveSales(salesData);
-                setLoading(false); // Initial data load for sales done
-                setError(null);
-              }, err => {
-                console.error("Error fetching active sales:", err);
-                setError("Error al cargar las ventas activas.");
-                setLoading(false); // Error occurred during data load
-              });
-
-            // Feria History Listener
-            unsubscribeHistory = db.collection('feriaHistory').orderBy('archivedAt', 'desc')
-              .onSnapshot(snapshot => {
-                const historyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setFeriaHistory(historyData);
-                setLoading(false); // Initial data load for history done
-                setError(null);
-              }, err => {
-                console.error("Error fetching feria history:", err);
-                setError("Error al cargar el historial de ferias.");
-                setLoading(false); // Error occurred during data load
-              });
-          } else {
-             // If no user, ensure state is cleared and loading is false
-            setActiveFeriaConfig(null);
-            setActiveSales([]);
-            setFeriaHistory([]);
-            setLoading(false);
+          if (!userRole) {
+             // Clear data if logged out to avoid stale info
+             setActiveFeriaConfig(null);
+             setActiveSales([]);
+             setFeriaHistory([]);
+             return;
           }
 
-          return () => { // Cleanup Firestore listeners on unmount or user logout
+          // Listen for activeFeriaConfig
+          const unsubscribeConfig = db.collection('settings').doc('activeFeria')
+            .onSnapshot(doc => {
+              setActiveFeriaConfig(doc.exists ? doc.data() : null);
+            }, err => console.error("Error fetching active config:", err));
+
+          // Listen for activeSales
+          const unsubscribeSales = db.collection('activeSales')
+            .onSnapshot(snapshot => {
+              const sales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setActiveSales(sales);
+            }, err => console.error("Error fetching active sales:", err));
+
+          // Listen for feriaHistory
+          const unsubscribeHistory = db.collection('feriaHistory').orderBy('archivedAt', 'desc')
+            .onSnapshot(snapshot => {
+              const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setFeriaHistory(history);
+            }, err => console.error("Error fetching feria history:", err));
+
+          return () => {
             unsubscribeConfig();
             unsubscribeSales();
             unsubscribeHistory();
           };
-        }, [userRole]); // Rerun when userRole changes (login/logout)
+        }, [userRole]);
 
-
-        const handleLogin = React.useCallback((role, username) => {
-          // The onAuthStateChanged listener will handle setting userRole and loggedInUser.
-          // This function is primarily for AuthScreen to trigger the auth process.
-          // Data listeners will be set up by the other useEffect when userRole is established.
-        }, []); // No need for fetchAllData here, listeners will handle
-
-        const handleLogout = React.useCallback(async () => {
-          try {
-            await apiService.logout();
-            // onAuthStateChanged will handle clearing state
-          } catch (err) {
-            console.error('Logout failed:', err);
-            alert('Error al cerrar sesión: ' + err.message);
-          }
+        const handleLogin = React.useCallback((role, userEmail) => {
+          setUserRole(role);
+          setUsername(userEmail);
         }, []);
 
-        // Admin actions
+        const handleLogout = React.useCallback(async () => {
+          await apiService.logout();
+          setUserRole(null);
+          setUsername(null);
+        }, []);
+
         const handleUpdateFeriaConfig = React.useCallback(async (newConfig) => {
-          try {
-            await apiService.saveActiveFeriaConfig(newConfig);
-            // Listeners will update state
-          } catch (err) {
-            console.error("Error updating feria config:", err);
-            throw new Error("No se pudo actualizar la configuración de la feria.");
-          }
+          await apiService.saveActiveFeriaConfig(newConfig);
         }, []);
 
         const handleAddSale = React.useCallback(async (newSale) => {
-          try {
-            await apiService.addSale(newSale);
-            // Listeners will update state
-          } catch (err) {
-            console.error("Error adding sale:", err);
-            throw new Error("No se pudo registrar la venta.");
-          }
+          await apiService.addSale(newSale);
         }, []);
 
         const archiveCurrentFeria = React.useCallback(async () => {
-          if (activeFeriaConfig?.id) { // Ensure activeFeriaConfig has a valid ID for archiving
+          if (activeFeriaConfig) {
             const reportSummary = calculateReportSummary(activeFeriaConfig, activeSales);
             const newHistoricalFeria = {
               config: activeFeriaConfig,
@@ -1506,73 +1599,24 @@
               reportSummary: reportSummary,
               archivedAt: new Date().toISOString(),
             };
-
-            try {
-              await apiService.archiveCurrentFeria(newHistoricalFeria);
-              // Listeners will update state
-            } catch (err) {
-              console.error("Error archiving feria:", err);
-              throw new Error("No se pudo finalizar y archivar la feria.");
-            }
-          } else {
-             throw new Error("No hay feria activa válida para archivar.");
+            await apiService.archiveCurrentFeria(newHistoricalFeria);
           }
         }, [activeFeriaConfig, activeSales]);
 
-
-        const activateHistoricalFeria = React.useCallback(async (feriaToActivate) => {
-            if (activeFeriaConfig?.nombreFeria) { // Check if there's an active feria with a name
-                if (!window.confirm('Hay una feria activa actualmente. ¿Deseas finalizarla y archivarla antes de activar una del historial?')) {
-                    throw new Error('Operación cancelada por el usuario.');
-                }
-                await archiveCurrentFeria(); // Archive current active feria first
-            }
-
-            try {
-                // Ensure feriaToActivate has a valid ID for operations
-                if (!feriaToActivate || !feriaToActivate.id) {
-                    throw new Error("Feria histórica inválida para activar.");
-                }
-                await apiService.activateHistoricalFeria(feriaToActivate);
-                // Listeners will update state
-            } catch (err) {
-                console.error("Error activating historical feria:", err);
-                throw new Error("No se pudo activar la feria histórica: " + err.message);
-            }
-        }, [activeFeriaConfig, archiveCurrentFeria]);
+        const activateHistoricalFeria = React.useCallback(async (feria) => {
+           await apiService.activateHistoricalFeria(feria);
+        }, []);
 
         const handleDeleteHistoricalFeria = React.useCallback(async (feriaId) => {
-            try {
-                await apiService.deleteHistoricalFeria(feriaId);
-                // Listeners will update state
-            } catch (err) {
-                console.error("Error deleting historical feria:", err);
-                throw new Error("No se pudo eliminar la feria del historial: " + err.message);
-            }
+           await apiService.deleteHistoricalFeria(feriaId);
         }, []);
+
 
         if (loading) {
           return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight">
-              <div className="spinner"></div>
-              <p className="mt-4 text-lg">Cargando datos...</p>
-            </div>
-          );
-        }
-
-        // Show global error if there's an issue and no user is logged in
-        // If a user is logged in, specific components might handle their own errors or a more subtle global alert
-        if (error && !userRole) {
-          return (
-            <div className="flex flex-col items-center justify-center min-h-screen bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight p-4">
-              <p className="text-accent text-xl font-bold mb-4">Error de la aplicación:</p>
-              <p className="text-gray-700 dark:text-gray-300 text-center">{error}</p>
-              <button
-                onClick={() => window.location.reload()} // Simple reload to re-attempt
-                className="mt-6 py-2 px-4 bg-primary text-white rounded-md hover:bg-emerald-600"
-              >
-                Reintentar
-              </button>
+              <div className="spinner h-16 w-16 border-t-2 border-b-2 border-primary"></div>
+              <p className="mt-4 text-lg">Cargando...</p>
             </div>
           );
         }
@@ -1597,14 +1641,14 @@
                 activeFeriaConfig={activeFeriaConfig}
                 onAddSale={handleAddSale}
                 onLogout={handleLogout}
-                loggedInUser={loggedInUser}
+                loggedInUser={username}
               />
             )}
           </div>
         );
       }
 
-      // --- Main Entry Point (inlined from index.tsx) ---
+      // index.jsx (main entry point)
       const rootElement = document.getElementById('root');
       if (!rootElement) {
         throw new Error("Could not find root element to mount to");
