@@ -6,6 +6,8 @@
     <title>LOLA VENTAS</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tone.js CDN for generative audio -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <!-- Custom Tailwind configuration for immediate use -->
     <script>
         tailwind.config = {
@@ -147,21 +149,68 @@
       const SALES_USER_EMAIL = 'cboludas@gmail.com';
       const SALES_USER_PASSWORD = 'lol12345';
 
-      const DIGITAL_PAYMENT_SOUND_BASE64 = 'data:audio/wav;base64,UklGRmYBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQBAAD//wAA/v8EBAAABgYAAAYGAAP//wD+/wQCBAAGCggICgQCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-      const CASH_PAYMENT_SOUND_BASE64 = 'data:audio/wav;base64,UklGRmIBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACAAABAQIAAAAAAQAA/v8EBAAABgYAAAYGAAP//wD+/wQCBAAGCggICgQCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-      const PINTA_ADD_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAABgYAAAYG';
-      const PINTA_SUB_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAACgoICgoI';
-      const LITRO_ADD_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAAEBAQEBAQ';
-      const LITRO_SUB_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAADwcHDwcH';
-      // New tech click sound (simple short beep/click)
-      const UI_CLICK_SOUND_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAgACAA='; 
+      // --- Audio Service using Tone.js ---
+      const audioService = {
+          initialized: false,
+          synth: null,
+          polySynth: null,
+          
+          init: async () => {
+              if (audioService.initialized) return;
+              await Tone.start();
+              
+              // Simple synth for UI clicks and beeps
+              audioService.synth = new Tone.Synth({
+                  oscillator: { type: "sine" },
+                  envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
+              }).toDestination();
+              audioService.synth.volume.value = -10;
 
-      // --- Helper Functions ---
-      const playUiClick = () => {
-          try {
-              new Audio(UI_CLICK_SOUND_BASE64).play().catch(() => {});
-          } catch(e) {}
+              // PolySynth for chords (success)
+              audioService.polySynth = new Tone.PolySynth(Tone.Synth, {
+                  oscillator: { type: "triangle" },
+                  envelope: { attack: 0.02, decay: 0.1, sustain: 0.1, release: 1 }
+              }).toDestination();
+              audioService.polySynth.volume.value = -12;
+
+              audioService.initialized = true;
+          },
+
+          playClick: () => {
+              if (!audioService.initialized) audioService.init();
+              // Short high tick
+              if (audioService.synth) audioService.synth.triggerAttackRelease("C6", "32n");
+          },
+
+          playAdd: () => {
+              if (!audioService.initialized) audioService.init();
+              // Cheerful ping
+              if (audioService.synth) audioService.synth.triggerAttackRelease("E5", "16n");
+          },
+
+          playSub: () => {
+              if (!audioService.initialized) audioService.init();
+              // Lower un-do sound
+              if (audioService.synth) audioService.synth.triggerAttackRelease("C4", "16n");
+          },
+
+          playSuccess: () => {
+              if (!audioService.initialized) audioService.init();
+              // Major chord
+              if (audioService.polySynth) {
+                  audioService.polySynth.triggerAttackRelease(["C4", "E4", "G4", "C5"], "8n");
+              }
+          },
+
+          playError: () => {
+               if (!audioService.initialized) audioService.init();
+               // Low dissonant tone
+               if (audioService.synth) audioService.synth.triggerAttackRelease("A2", "8n");
+          }
       };
+
+      // Helper wrapper
+      const playUiClick = () => audioService.playClick();
 
       const calculateReportSummary = (feriaConfig, sales) => {
         let totalPintas = 0;
@@ -291,8 +340,15 @@
         const isAdminInput = normalizedInput === 'regis';
         const isSalesInput = normalizedInput === 'lol';
 
+        // Init audio on interaction
+        React.useEffect(() => {
+            const initAudio = () => audioService.init();
+            window.addEventListener('click', initAudio, { once: true });
+            return () => window.removeEventListener('click', initAudio);
+        }, []);
+
         const doLogin = async (email, password, expectedRole) => {
-            playUiClick();
+            audioService.playClick();
             setLoading(true);
             setError(null);
             try {
@@ -303,6 +359,7 @@
                 }
             } catch (err) {
                 setError(err.message || 'Error de login.');
+                audioService.playError();
             } finally {
                 setLoading(false);
             }
@@ -322,6 +379,7 @@
                         type="text"
                         placeholder="INGRESAR USUARIO"
                         value={usernameInput}
+                        onFocus={() => audioService.playClick()}
                         onChange={(e) => { setUsernameInput(e.target.value); setError(null); }}
                         disabled={loading}
                         className="w-full p-5 bg-white dark:bg-surfaceDark border-2 border-transparent focus:border-primary text-gray-800 dark:text-gray-100 rounded-2xl shadow-xl text-center text-2xl font-bold outline-none transition-all placeholder-gray-400 dark:placeholder-gray-500"
@@ -356,13 +414,6 @@
         const [pendingOrders, setPendingOrders] = React.useState([]);
         const [showSuccess, setShowSuccess] = React.useState(false);
 
-        const digitalSoundRef = React.useRef(new Audio(DIGITAL_PAYMENT_SOUND_BASE64));
-        const billeteSoundRef = React.useRef(new Audio(CASH_PAYMENT_SOUND_BASE64));
-        const pintaAddSoundRef = React.useRef(new Audio(PINTA_ADD_SOUND_BASE64));
-        const pintaSubSoundRef = React.useRef(new Audio(PINTA_SUB_SOUND_BASE64));
-        const litroAddSoundRef = React.useRef(new Audio(LITRO_ADD_SOUND_BASE64));
-        const litroSubSoundRef = React.useRef(new Audio(LITRO_SUB_SOUND_BASE64));
-
         React.useEffect(() => {
           const storedPending = localStorage.getItem('pendingOrders');
           if (storedPending) setPendingOrders(JSON.parse(storedPending));
@@ -390,11 +441,6 @@
             }
         }, [isOnline, pendingOrders]);
 
-        const playSound = (audioRef) => {
-             audioRef.current.currentTime = 0;
-             audioRef.current.play().catch(e => {});
-        };
-        
         const triggerVisualFeedback = (buttonId) => {
             setActiveButton(buttonId);
             setTimeout(() => setActiveButton(null), 150);
@@ -405,7 +451,7 @@
             <div className="flex flex-col items-center justify-center min-h-screen bg-lightbg dark:bg-darkbg p-6">
               <h2 className="text-5xl font-bold text-gray-400 mb-8">CERRADO</h2>
               <p className="text-xl text-gray-500 mb-8">No hay feria activa.</p>
-              <button onClick={() => { playUiClick(); onLogout(); }} className="py-3 px-8 bg-surfaceDark text-white rounded-full">Salir</button>
+              <button onClick={() => { audioService.playClick(); onLogout(); }} className="py-3 px-8 bg-surfaceDark text-white rounded-full">Salir</button>
             </div>
           );
         }
@@ -415,6 +461,9 @@
 
         const handleRegisterSale = async (tipoPago) => {
           if (pintaCount === 0 && litroCount === 0) return;
+          
+          audioService.playSuccess();
+
           const newSale = {
             fechaVenta: new Date().toISOString(),
             tipoUnidad: (pintaCount > 0 && litroCount > 0) ? TipoUnidad.Mixed : (pintaCount > 0 ? TipoUnidad.Pinta : TipoUnidad.Litro),
@@ -433,7 +482,6 @@
 
           setPintaCount(0); setLitroCount(0);
           triggerVisualFeedback(tipoPago === TipoPago.Digital ? 'digital' : 'billete');
-          playSound(tipoPago === TipoPago.Digital ? digitalSoundRef : billeteSoundRef);
           
           // Show "CARGADO" animation
           setShowSuccess(true);
@@ -442,20 +490,14 @@
 
         const handlePintaChange = (delta) => {
             triggerVisualFeedback('pinta');
-            setPintaCount(prev => {
-                const n = Math.max(0, prev + delta);
-                playSound(delta > 0 ? pintaAddSoundRef : pintaSubSoundRef);
-                return n;
-            });
+            if(delta > 0) audioService.playAdd(); else audioService.playSub();
+            setPintaCount(prev => Math.max(0, prev + delta));
         };
 
         const handleLitroChange = (delta) => {
             triggerVisualFeedback('litro');
-            setLitroCount(prev => {
-                const n = Math.max(0, prev + delta);
-                playSound(delta > 0 ? litroAddSoundRef : litroSubSoundRef);
-                return n;
-            });
+            if(delta > 0) audioService.playAdd(); else audioService.playSub();
+            setLitroCount(prev => Math.max(0, prev + delta));
         };
 
         const hasItems = pintaCount > 0 || litroCount > 0;
@@ -472,14 +514,14 @@
             )}
 
             {/* Header */}
-            <div className="flex justify-between items-center p-4 bg-white dark:bg-surfaceDark shadow-md z-10">
+            <div className="flex justify-between items-center p-3 bg-white dark:bg-surfaceDark shadow-md z-10">
               <div>
-                  <h1 className="text-xl font-bold text-gray-800 dark:text-white leading-tight">LOLA <span className="text-primary">VENTAS</span></h1>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">{activeFeriaConfig.nombreFeria}</p>
+                  <h1 className="text-lg font-bold text-gray-500 dark:text-gray-400 leading-tight">LOLA <span className="text-primary">VENTAS</span></h1>
+                  <p className="text-2xl md:text-3xl text-gray-800 dark:text-white font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
               </div>
               <div className="flex items-center gap-3">
                   {!isOnline && <span className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold animate-pulse">OFFLINE ({pendingOrders.length})</span>}
-                  <button onClick={() => { playUiClick(); onLogout(); }} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
+                  <button onClick={() => { audioService.playClick(); onLogout(); }} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                   </button>
               </div>
@@ -490,6 +532,13 @@
                {/* Pinta Button */}
                <div className={`flex-1 relative rounded-2xl overflow-hidden transition-all duration-100 ${activeButton === 'pinta' ? 'transform scale-[0.98] ring-4 ring-blue-400' : ''}`}>
                    <button onClick={() => handlePintaChange(1)} className="w-full h-full bg-blue-600 active:bg-blue-700 flex flex-col items-center justify-center text-white shadow-lg">
+                       
+                       {/* Pinta Icon */}
+                       <svg className="w-16 h-16 md:w-20 md:h-20 mb-2 opacity-90" fill="currentColor" viewBox="0 0 24 24">
+                           <path d="M5 2l1.2 16.8c.1 1.7 1.5 3.2 3.3 3.2h5c1.8 0 3.2-1.5 3.3-3.2L19 2H5zm12 2l-1 14.5c0 .7-.7 1.5-1.5 1.5h-5c-.8 0-1.5-.8-1.5-1.5L7 4h10z" />
+                           <path d="M6 5h12v2H6z" opacity="0.3"/>
+                       </svg>
+
                        <span className="text-3xl md:text-5xl font-bold mb-1">PINTA</span>
                        <span className="text-lg opacity-80">${activeFeriaConfig.valorPinta}</span>
                        <div className="mt-4 bg-blue-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
@@ -506,6 +555,13 @@
                {/* Litro Button */}
                <div className={`flex-1 relative rounded-2xl overflow-hidden transition-all duration-100 ${activeButton === 'litro' ? 'transform scale-[0.98] ring-4 ring-purple-400' : ''}`}>
                    <button onClick={() => handleLitroChange(1)} className="w-full h-full bg-purple-600 active:bg-purple-700 flex flex-col items-center justify-center text-white shadow-lg">
+                       
+                       {/* Litro Icon (Bigger Mug) */}
+                       <svg className="w-20 h-20 md:w-24 md:h-24 mb-2 opacity-90" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M19 5h-1v13.5c0 1.9-1.6 3.5-3.5 3.5h-7C5.6 22 4 20.4 4 18.5V5H3v13.5C3 21.5 5.5 24 8.5 24h7c3 0 5.5-2.5 5.5-5.5V5zM6 3h12v2H6z"/>
+                          <path d="M21 8h-2v7h2c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2z"/>
+                       </svg>
+
                        <span className="text-3xl md:text-5xl font-bold mb-1">LITRO</span>
                        <span className="text-lg opacity-80">${activeFeriaConfig.valorLitro}</span>
                        <div className="mt-4 bg-purple-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
@@ -520,10 +576,10 @@
                </div>
             </div>
 
-            {/* Total Display */}
-            <div className="bg-surfaceDark dark:bg-black p-4 text-center border-t border-gray-700">
-                <span className="text-gray-400 text-lg uppercase tracking-widest block mb-1">Total a cobrar</span>
-                <span className={`text-5xl md:text-6xl font-bold transition-all ${hasItems ? 'text-primary scale-110' : 'text-gray-600'}`}>${total}</span>
+            {/* Total Display - Condensed */}
+            <div className="bg-surfaceDark dark:bg-black p-2 text-center border-t border-gray-700">
+                <span className="text-gray-400 text-sm uppercase tracking-widest block">Total a cobrar</span>
+                <span className={`text-5xl font-bold transition-all ${hasItems ? 'text-primary' : 'text-gray-600'}`}>${total}</span>
             </div>
 
             {/* Payment Actions - Stick to bottom */}
@@ -533,14 +589,22 @@
                     disabled={!hasItems}
                     className={`rounded-xl flex flex-col items-center justify-center text-white transition-all duration-150 transform ${hasItems ? 'bg-primary hover:bg-emerald-600 shadow-lg shadow-emerald-500/40 active:scale-95' : 'bg-gray-300 dark:bg-gray-800 cursor-not-allowed opacity-50'} ${activeButton === 'digital' ? 'ring-4 ring-white' : ''}`}
                 >
-                    <span className="text-xl md:text-2xl font-bold uppercase">$ DIGITAL</span>
+                    <div className="flex flex-col items-center gap-2">
+                        {/* Digital Icon */}
+                        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                        <span className="text-xl md:text-2xl font-bold uppercase">$ DIGITAL</span>
+                    </div>
                 </button>
                 <button 
                     onClick={() => handleRegisterSale(TipoPago.Billete)} 
                     disabled={!hasItems}
                     className={`rounded-xl flex flex-col items-center justify-center text-white transition-all duration-150 transform ${hasItems ? 'bg-secondary hover:bg-amber-600 shadow-lg shadow-amber-500/40 active:scale-95' : 'bg-gray-300 dark:bg-gray-800 cursor-not-allowed opacity-50'} ${activeButton === 'billete' ? 'ring-4 ring-white' : ''}`}
                 >
-                    <span className="text-xl md:text-2xl font-bold uppercase">$ BILLETE</span>
+                     <div className="flex flex-col items-center gap-2">
+                        {/* Billete Icon */}
+                        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                        <span className="text-xl md:text-2xl font-bold uppercase">$ BILLETE</span>
+                    </div>
                 </button>
             </div>
           </div>
@@ -552,7 +616,7 @@
         const [showHistoricalReportModal, setShowHistoricalReportModal] = React.useState(false);
         const [selectedHistoricalFeria, setSelectedHistoricalFeria] = React.useState(null);
 
-        const setViewWithSound = (v) => { playUiClick(); setView(v); };
+        const setViewWithSound = (v) => { audioService.playClick(); setView(v); };
 
         return (
           <div className="min-h-screen bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight">
@@ -566,7 +630,7 @@
                              <button onClick={() => setViewWithSound('report')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'report' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Reporte Activo</button>
                              <button onClick={() => setViewWithSound('history')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'history' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Historial</button>
                         </div>
-                        <button onClick={() => { playUiClick(); onLogout(); }} className="text-accent hover:text-red-700 font-bold text-sm border border-accent rounded px-3 py-1">SALIR</button>
+                        <button onClick={() => { audioService.playClick(); onLogout(); }} className="text-accent hover:text-red-700 font-bold text-sm border border-accent rounded px-3 py-1">SALIR</button>
                     </div>
                 </div>
                 {/* Mobile Tab Bar */}
@@ -580,10 +644,10 @@
             <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
               {view === 'config' && <FeriaConfigForm activeFeriaConfig={activeFeriaConfig} onSave={onUpdateFeriaConfig} onFinalizeFeria={onFinalizeFeria} />}
               {view === 'report' && <SalesReport activeFeriaConfig={activeFeriaConfig} activeSales={activeSales} onFinalizeFeria={onFinalizeFeria} />}
-              {view === 'history' && <FeriaHistoryList activeFeriaConfig={activeFeriaConfig} feriaHistory={feriaHistory} onActivateFeria={onActivateHistoricalFeria} onShowReport={(f) => { playUiClick(); setSelectedHistoricalFeria(f); setShowHistoricalReportModal(true); }} onDeleteFeria={(id) => { playUiClick(); if(window.confirm('Eliminar?')) onDeleteHistoricalFeria(id); }} />}
+              {view === 'history' && <FeriaHistoryList activeFeriaConfig={activeFeriaConfig} feriaHistory={feriaHistory} onActivateFeria={onActivateHistoricalFeria} onShowReport={(f) => { audioService.playClick(); setSelectedHistoricalFeria(f); setShowHistoricalReportModal(true); }} onDeleteFeria={(id) => { audioService.playClick(); if(window.confirm('Eliminar?')) onDeleteHistoricalFeria(id); }} />}
             </main>
             
-            {showHistoricalReportModal && selectedHistoricalFeria && <HistoricalFeriaReportModal feria={selectedHistoricalFeria} onClose={() => { playUiClick(); setShowHistoricalReportModal(false); }} />}
+            {showHistoricalReportModal && selectedHistoricalFeria && <HistoricalFeriaReportModal feria={selectedHistoricalFeria} onClose={() => { audioService.playClick(); setShowHistoricalReportModal(false); }} />}
           </div>
         );
       };
@@ -600,7 +664,7 @@
 
         const handleSubmit = async (e) => {
             e.preventDefault();
-            playUiClick();
+            audioService.playClick();
             try {
                 await onSave(formData);
                 setFeedback({ msg: 'Guardado correctamente.', isError: false });
@@ -615,19 +679,19 @@
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Nombre del Evento</label>
-                        <input type="text" required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary text-dark dark:text-white" value={formData.nombreFeria} onChange={e => setFormData({...formData, nombreFeria: e.target.value})} />
+                        <input type="text" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-primary focus:border-primary text-dark dark:text-white" value={formData.nombreFeria} onChange={e => setFormData({...formData, nombreFeria: e.target.value})} />
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Inicio</label><input type="date" required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white" value={formData.fechaInicio} onChange={e => setFormData({...formData, fechaInicio: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Fin</label><input type="date" required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white" value={formData.fechaFin} onChange={e => setFormData({...formData, fechaFin: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Inicio</label><input type="date" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white" value={formData.fechaInicio} onChange={e => setFormData({...formData, fechaInicio: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Fin</label><input type="date" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white" value={formData.fechaFin} onChange={e => setFormData({...formData, fechaFin: e.target.value})} /></div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Pinta ($)</label><input type="number" step="0.01" required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorPinta} onChange={e => setFormData({...formData, valorPinta: parseFloat(e.target.value)})} /></div>
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Litro ($)</label><input type="number" step="0.01" required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorLitro} onChange={e => setFormData({...formData, valorLitro: parseFloat(e.target.value)})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Pinta ($)</label><input type="number" step="0.01" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorPinta} onChange={e => setFormData({...formData, valorPinta: parseFloat(e.target.value)})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Litro ($)</label><input type="number" step="0.01" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorLitro} onChange={e => setFormData({...formData, valorLitro: parseFloat(e.target.value)})} /></div>
                     </div>
                     <div className="pt-4 flex flex-col md:flex-row gap-4">
                         <button type="submit" className="flex-1 py-3 px-6 bg-primary text-white rounded-md font-bold hover:bg-emerald-600 transition shadow-lg">GUARDAR CAMBIOS</button>
-                        {activeFeriaConfig && <button type="button" onClick={() => { playUiClick(); onFinalizeFeria(); }} className="flex-1 py-3 px-6 bg-surfaceDark dark:bg-black border border-gray-600 text-white rounded-md font-bold hover:bg-gray-800 transition">ARCHIVAR FERIA ACTUAL</button>}
+                        {activeFeriaConfig && <button type="button" onClick={() => { audioService.playClick(); onFinalizeFeria(); }} className="flex-1 py-3 px-6 bg-surfaceDark dark:bg-black border border-gray-600 text-white rounded-md font-bold hover:bg-gray-800 transition">ARCHIVAR FERIA ACTUAL</button>}
                     </div>
                 </form>
             </div>
@@ -639,7 +703,7 @@
         const report = calculateReportSummary(activeFeriaConfig, activeSales);
         
         const handleShare = () => {
-             playUiClick();
+             audioService.playClick();
              const message = `*Reporte: ${activeFeriaConfig.nombreFeria}*\nTotal: $${report.montoTotalGeneral}`;
              window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
         };
@@ -666,7 +730,7 @@
                 </div>
                 <div className="flex gap-4 pt-4">
                     <button onClick={handleShare} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg shadow transition">WhatsApp</button>
-                    <button onClick={() => { playUiClick(); onFinalizeFeria(); }} className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-red-100 hover:text-red-600 text-gray-700 dark:text-gray-200 font-bold py-3 rounded-lg transition">Cerrar Feria</button>
+                    <button onClick={() => { audioService.playClick(); onFinalizeFeria(); }} className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-red-100 hover:text-red-600 text-gray-700 dark:text-gray-200 font-bold py-3 rounded-lg transition">Cerrar Feria</button>
                 </div>
             </div>
         );
@@ -687,7 +751,7 @@
                           <div className="flex gap-2">
                               <button onClick={() => onShowReport(feria)} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md font-bold text-sm hover:bg-blue-200">Ver</button>
                               <button onClick={() => onDeleteFeria(feria.id)} className="px-4 py-2 bg-red-100 text-red-700 rounded-md font-bold text-sm hover:bg-red-200">Borrar</button>
-                              <button onClick={() => { playUiClick(); if(window.confirm('Activar esta feria archivará la actual. Continuar?')) onActivateFeria(feria); }} className="px-4 py-2 bg-green-100 text-green-700 rounded-md font-bold text-sm hover:bg-green-200">Reactivar</button>
+                              <button onClick={() => { audioService.playClick(); if(window.confirm('Activar esta feria archivará la actual. Continuar?')) onActivateFeria(feria); }} className="px-4 py-2 bg-green-100 text-green-700 rounded-md font-bold text-sm hover:bg-green-200">Reactivar</button>
                           </div>
                       </div>
                   ))}
@@ -728,18 +792,22 @@
         }, [feria]);
 
         const handleDownloadPdf = () => {
-            playUiClick();
+            audioService.playClick();
             const doc = new jsPDF();
             doc.setFontSize(22); doc.setTextColor('#10B981'); doc.text(`${feria.config.nombreFeria}`, 14, 20);
             doc.setFontSize(14); doc.setTextColor('#000'); doc.text(`Total: $${report.montoTotalGeneral}`, 14, 40);
             doc.text(`Digital: $${report.montoTotalDigital} | Billete: $${report.montoTotalBillete}`, 14, 50);
             doc.text(`Volumen: ${report.totalPintas} P / ${report.totalLitros} L`, 14, 60);
-            if (canvasRef.current) doc.addImage(canvasRef.current.toBase64Image(), 'PNG', 14, 70, 180, 80);
+            if (canvasRef.current) {
+                // FIXED: Changed from toBase64Image() to toDataURL('image/png')
+                const imgData = canvasRef.current.toDataURL('image/png');
+                doc.addImage(imgData, 'PNG', 14, 70, 180, 80);
+            }
             doc.save(`Reporte_${feria.config.nombreFeria}.pdf`);
         };
 
         const handleShare = () => {
-             playUiClick();
+             audioService.playClick();
              const msg = `*HISTORICO: ${feria.config.nombreFeria}*\nTotal: $${report.montoTotalGeneral}\n(D: $${report.montoTotalDigital} / B: $${report.montoTotalBillete})`;
              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
         };

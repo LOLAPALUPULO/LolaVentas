@@ -1,12 +1,15 @@
 export const ADMIN_USER_EMAIL = 'admin@example.com';
 
-// Placeholder Silent MP3 Base64 to prevent runtime errors in Audio constructor
-const SILENT_MP3 = 'data:audio/mp3;base64,//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+// Real short sine beep (approx 50ms) for UI Click
+const UI_CLICK_SOUND_BASE64 = 'data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSwAAACAgICAgICAgICAgICAgICAgICAgICAgICAf39/f39/f39/f39/f39/f39/f38=';
 
-export const DIGITAL_PAYMENT_SOUND_BASE64 = SILENT_MP3;
-export const CASH_PAYMENT_SOUND_BASE64 = SILENT_MP3;
-export const PINTA_ADD_SOUND_BASE64 = SILENT_MP3;
-export const PINTA_SUB_SOUND_BASE64 = SILENT_MP3;
-export const LITRO_ADD_SOUND_BASE64 = SILENT_MP3;
-export const LITRO_SUB_SOUND_BASE64 = SILENT_MP3;
-export const UI_CLICK_SOUND_BASE64 = SILENT_MP3;
+// Success / Chime sound
+const SUCCESS_SOUND_BASE64 = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAf39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f38=';
+
+export const DIGITAL_PAYMENT_SOUND_BASE64 = SUCCESS_SOUND_BASE64;
+export const CASH_PAYMENT_SOUND_BASE64 = SUCCESS_SOUND_BASE64;
+export const PINTA_ADD_SOUND_BASE64 = UI_CLICK_SOUND_BASE64;
+export const PINTA_SUB_SOUND_BASE64 = UI_CLICK_SOUND_BASE64;
+export const LITRO_ADD_SOUND_BASE64 = UI_CLICK_SOUND_BASE64;
+export const LITRO_SUB_SOUND_BASE64 = UI_CLICK_SOUND_BASE64;
+export { UI_CLICK_SOUND_BASE64 };
