@@ -618,21 +618,21 @@
             </div>
 
             {/* Main Product Area - Expands to fill available space */}
-            <div className="flex-grow flex flex-col md:flex-row p-2 gap-2 overflow-y-auto">
+            <div className="flex-grow flex flex-row p-2 gap-2 overflow-y-auto">
                {/* Pinta Button */}
                <div className={`flex-1 relative rounded-2xl overflow-hidden transition-all duration-100 ${activeButton === 'pinta' ? 'transform scale-[0.98] ring-4 ring-blue-400' : ''}`}>
                    <button onClick={() => handlePintaChange(1)} className="w-full h-full bg-blue-600 active:bg-blue-700 flex flex-col items-center justify-center text-white shadow-lg">
                        
                        {/* Pinta Icon */}
-                       <svg className="w-16 h-16 md:w-20 md:h-20 mb-2 opacity-90" fill="currentColor" viewBox="0 0 24 24">
+                       <svg className="w-12 h-12 md:w-20 md:h-20 mb-1 opacity-90" fill="currentColor" viewBox="0 0 24 24">
                            <path d="M5 2l1.2 16.8c.1 1.7 1.5 3.2 3.3 3.2h5c1.8 0 3.2-1.5 3.3-3.2L19 2H5zm12 2l-1 14.5c0 .7-.7 1.5-1.5 1.5h-5c-.8 0-1.5-.8-1.5-1.5L7 4h10z" />
                            <path d="M6 5h12v2H6z" opacity="0.3"/>
                        </svg>
 
-                       <span className="text-3xl md:text-5xl font-display mb-1">PINTA</span>
-                       <span className="text-lg opacity-80">${activeFeriaConfig.valorPinta}</span>
-                       <div className="mt-4 bg-blue-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
-                           <span className="text-6xl md:text-7xl font-extrabold">{pintaCount}</span>
+                       <span className="text-2xl md:text-5xl font-display mb-0">PINTA</span>
+                       <span className="text-base opacity-80">${activeFeriaConfig.valorPinta}</span>
+                       <div className="mt-2 bg-blue-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
+                           <span className="text-4xl md:text-7xl font-extrabold">{pintaCount}</span>
                        </div>
                    </button>
                    {pintaCount > 0 && (
@@ -647,15 +647,15 @@
                    <button onClick={() => handleLitroChange(1)} className="w-full h-full bg-purple-600 active:bg-purple-700 flex flex-col items-center justify-center text-white shadow-lg">
                        
                        {/* Litro Icon (Bigger Mug) */}
-                       <svg className="w-20 h-20 md:w-24 md:h-24 mb-2 opacity-90" fill="currentColor" viewBox="0 0 24 24">
+                       <svg className="w-14 h-14 md:w-24 md:h-24 mb-1 opacity-90" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M19 5h-1v13.5c0 1.9-1.6 3.5-3.5 3.5h-7C5.6 22 4 20.4 4 18.5V5H3v13.5C3 21.5 5.5 24 8.5 24h7c3 0 5.5-2.5 5.5-5.5V5zM6 3h12v2H6z"/>
                           <path d="M21 8h-2v7h2c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2z"/>
                        </svg>
 
-                       <span className="text-3xl md:text-5xl font-display mb-1">LITRO</span>
-                       <span className="text-lg opacity-80">${activeFeriaConfig.valorLitro}</span>
-                       <div className="mt-4 bg-purple-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
-                           <span className="text-6xl md:text-7xl font-extrabold">{litroCount}</span>
+                       <span className="text-2xl md:text-5xl font-display mb-0">LITRO</span>
+                       <span className="text-base opacity-80">${activeFeriaConfig.valorLitro}</span>
+                       <div className="mt-2 bg-purple-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
+                           <span className="text-4xl md:text-7xl font-extrabold">{litroCount}</span>
                        </div>
                    </button>
                    {litroCount > 0 && (
