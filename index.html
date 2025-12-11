@@ -155,10 +155,17 @@
       // --- Constants ---
       const ADMIN_ROLE = 'admin';
       const SALES_ROLE = 'sales';
-      const ADMIN_USER_EMAIL = 'lolapalupulo@gmail.com';
-      const ADMIN_USER_PASSWORD = 'regis123';
-      const SALES_USER_EMAIL = 'cboludas@gmail.com';
-      const SALES_USER_PASSWORD = 'lol12345';
+      
+      // CREDENTIALS OBFUSCATED (Base64) to prevent plain-text viewing in source code
+      const ENC_ADMIN_EMAIL = 'bG9sYXBhbHVwdWxvQGdtYWlsLmNvbQ==';
+      const ENC_ADMIN_PASS = 'cmVnaXMxMjM=';
+      const ENC_SALES_EMAIL = 'Y2JvbHVkYXNAZ21haWwuY29t';
+      const ENC_SALES_PASS = 'bG9sMTIzNDU=';
+      
+      // TRIGGER WORDS OBFUSCATED
+      const ENC_TRIGGER_ADMIN = 'cmVnaXM='; 
+      const ENC_TRIGGER_SALES = 'bG9s';
+
       const LOLA_SVG_URL = 'https://raw.githubusercontent.com/LOLAPALUPULO/LolaVentas/034fef64afa32a2249a8be7284f6b59b63004079/lola.svg';
 
       // --- Audio Service using Tone.js ---
@@ -359,8 +366,9 @@
         const [loading, setLoading] = React.useState(false);
 
         const normalizedInput = usernameInput.trim().toLowerCase();
-        const isAdminInput = normalizedInput === 'regis';
-        const isSalesInput = normalizedInput === 'lol';
+        // COMPARE AGAINST DECODED VALUES
+        const isAdminInput = normalizedInput === atob(ENC_TRIGGER_ADMIN);
+        const isSalesInput = normalizedInput === atob(ENC_TRIGGER_SALES);
 
         // Init audio on interaction
         React.useEffect(() => {
@@ -416,12 +424,12 @@
 
                 <div className="w-full space-y-4">
                    {isAdminInput && (
-                       <button onClick={() => doLogin(ADMIN_USER_EMAIL, ADMIN_USER_PASSWORD, ADMIN_ROLE)} disabled={loading} className="w-full py-5 rounded-2xl font-bold text-xl text-white bg-gradient-to-r from-primary to-primaryDark shadow-lg shadow-emerald-500/30 transform transition-all active:scale-95 hover:shadow-emerald-500/50">
+                       <button onClick={() => doLogin(atob(ENC_ADMIN_EMAIL), atob(ENC_ADMIN_PASS), ADMIN_ROLE)} disabled={loading} className="w-full py-5 rounded-2xl font-bold text-xl text-white bg-gradient-to-r from-primary to-primaryDark shadow-lg shadow-emerald-500/30 transform transition-all active:scale-95 hover:shadow-emerald-500/50">
                            ENTRAR COMO ADMINISTRADOR
                        </button>
                    )}
                    {isSalesInput && (
-                       <button onClick={() => doLogin(SALES_USER_EMAIL, SALES_USER_PASSWORD, SALES_ROLE)} disabled={loading} className="w-full py-5 rounded-2xl font-bold text-xl text-white bg-gradient-to-r from-secondary to-secondaryDark shadow-lg shadow-amber-500/30 transform transition-all active:scale-95 hover:shadow-amber-500/50">
+                       <button onClick={() => doLogin(atob(ENC_SALES_EMAIL), atob(ENC_SALES_PASS), SALES_ROLE)} disabled={loading} className="w-full py-5 rounded-2xl font-bold text-xl text-white bg-gradient-to-r from-secondary to-secondaryDark shadow-lg shadow-amber-500/30 transform transition-all active:scale-95 hover:shadow-amber-500/50">
                            ENTRAR COMO VENDEDOR
                        </button>
                    )}
