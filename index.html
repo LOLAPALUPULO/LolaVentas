@@ -60,11 +60,11 @@
         }
 
         .animate-fade-in {
-            animation: fadeIn 0.5s ease-in-out;
+            animation: fadeIn 0.3s ease-out;
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
         }
 
         /* Scrollbar styling for a cleaner look */
@@ -98,6 +98,13 @@
     <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-firestore.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.1"
+  }
+}
+</script>
 <link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight min-h-screen font-sans overflow-x-hidden">
@@ -146,8 +153,16 @@
       const PINTA_SUB_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAACgoICgoI';
       const LITRO_ADD_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAAEBAQEBAQ';
       const LITRO_SUB_SOUND_BASE64 = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAGAAAADwcHDwcH';
+      // New tech click sound (simple short beep/click)
+      const UI_CLICK_SOUND_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAgACAA='; 
 
       // --- Helper Functions ---
+      const playUiClick = () => {
+          try {
+              new Audio(UI_CLICK_SOUND_BASE64).play().catch(() => {});
+          } catch(e) {}
+      };
+
       const calculateReportSummary = (feriaConfig, sales) => {
         let totalPintas = 0;
         let totalLitros = 0;
@@ -277,6 +292,7 @@
         const isSalesInput = normalizedInput === 'lol';
 
         const doLogin = async (email, password, expectedRole) => {
+            playUiClick();
             setLoading(true);
             setError(null);
             try {
@@ -338,6 +354,7 @@
         const [activeButton, setActiveButton] = React.useState(null); 
         const [isOnline, setIsOnline] = React.useState(navigator.onLine);
         const [pendingOrders, setPendingOrders] = React.useState([]);
+        const [showSuccess, setShowSuccess] = React.useState(false);
 
         const digitalSoundRef = React.useRef(new Audio(DIGITAL_PAYMENT_SOUND_BASE64));
         const billeteSoundRef = React.useRef(new Audio(CASH_PAYMENT_SOUND_BASE64));
@@ -388,7 +405,7 @@
             <div className="flex flex-col items-center justify-center min-h-screen bg-lightbg dark:bg-darkbg p-6">
               <h2 className="text-5xl font-bold text-gray-400 mb-8">CERRADO</h2>
               <p className="text-xl text-gray-500 mb-8">No hay feria activa.</p>
-              <button onClick={onLogout} className="py-3 px-8 bg-surfaceDark text-white rounded-full">Salir</button>
+              <button onClick={() => { playUiClick(); onLogout(); }} className="py-3 px-8 bg-surfaceDark text-white rounded-full">Salir</button>
             </div>
           );
         }
@@ -417,6 +434,10 @@
           setPintaCount(0); setLitroCount(0);
           triggerVisualFeedback(tipoPago === TipoPago.Digital ? 'digital' : 'billete');
           playSound(tipoPago === TipoPago.Digital ? digitalSoundRef : billeteSoundRef);
+          
+          // Show "CARGADO" animation
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 1500);
         };
 
         const handlePintaChange = (delta) => {
@@ -441,6 +462,15 @@
 
         return (
           <div className="flex flex-col min-h-screen bg-lightbg dark:bg-darkbg overflow-hidden relative">
+            {/* Success Overlay */}
+            {showSuccess && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white dark:bg-surfaceDark border-4 border-primary rounded-full w-64 h-64 flex items-center justify-center shadow-glow-primary transform scale-110">
+                        <span className="text-4xl md:text-5xl font-extrabold text-primary animate-pulse tracking-widest">CARGADO!</span>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex justify-between items-center p-4 bg-white dark:bg-surfaceDark shadow-md z-10">
               <div>
@@ -449,7 +479,7 @@
               </div>
               <div className="flex items-center gap-3">
                   {!isOnline && <span className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold animate-pulse">OFFLINE ({pendingOrders.length})</span>}
-                  <button onClick={onLogout} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
+                  <button onClick={() => { playUiClick(); onLogout(); }} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                   </button>
               </div>
@@ -522,6 +552,8 @@
         const [showHistoricalReportModal, setShowHistoricalReportModal] = React.useState(false);
         const [selectedHistoricalFeria, setSelectedHistoricalFeria] = React.useState(null);
 
+        const setViewWithSound = (v) => { playUiClick(); setView(v); };
+
         return (
           <div className="min-h-screen bg-lightbg dark:bg-darkbg text-textdark dark:text-textlight">
             {/* Admin Header */}
@@ -530,28 +562,28 @@
                     <div className="flex justify-between h-16 items-center">
                         <span className="text-2xl font-bold text-primary">ADMIN<span className="text-gray-500 text-lg">PANEL</span></span>
                         <div className="hidden md:flex space-x-4">
-                             <button onClick={() => setView('config')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'config' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Configurar</button>
-                             <button onClick={() => setView('report')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'report' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Reporte Activo</button>
-                             <button onClick={() => setView('history')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'history' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Historial</button>
+                             <button onClick={() => setViewWithSound('config')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'config' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Configurar</button>
+                             <button onClick={() => setViewWithSound('report')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'report' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Reporte Activo</button>
+                             <button onClick={() => setViewWithSound('history')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'history' ? 'bg-primary text-white' : 'text-gray-500 hover:text-primary'}`}>Historial</button>
                         </div>
-                        <button onClick={onLogout} className="text-accent hover:text-red-700 font-bold text-sm border border-accent rounded px-3 py-1">SALIR</button>
+                        <button onClick={() => { playUiClick(); onLogout(); }} className="text-accent hover:text-red-700 font-bold text-sm border border-accent rounded px-3 py-1">SALIR</button>
                     </div>
                 </div>
                 {/* Mobile Tab Bar */}
                 <div className="md:hidden flex border-t border-gray-200 dark:border-gray-700">
-                    <button onClick={() => setView('config')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'config' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Config</button>
-                    <button onClick={() => setView('report')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'report' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Reporte</button>
-                    <button onClick={() => setView('history')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'history' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Historial</button>
+                    <button onClick={() => setViewWithSound('config')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'config' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Config</button>
+                    <button onClick={() => setViewWithSound('report')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'report' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Reporte</button>
+                    <button onClick={() => setViewWithSound('history')} className={`flex-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${view === 'history' ? 'text-primary border-b-2 border-primary bg-gray-50 dark:bg-gray-800' : 'text-gray-500'}`}>Historial</button>
                 </div>
             </nav>
 
             <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
               {view === 'config' && <FeriaConfigForm activeFeriaConfig={activeFeriaConfig} onSave={onUpdateFeriaConfig} onFinalizeFeria={onFinalizeFeria} />}
               {view === 'report' && <SalesReport activeFeriaConfig={activeFeriaConfig} activeSales={activeSales} onFinalizeFeria={onFinalizeFeria} />}
-              {view === 'history' && <FeriaHistoryList activeFeriaConfig={activeFeriaConfig} feriaHistory={feriaHistory} onActivateFeria={onActivateHistoricalFeria} onShowReport={(f) => { setSelectedHistoricalFeria(f); setShowHistoricalReportModal(true); }} onDeleteFeria={(id) => { if(window.confirm('Eliminar?')) onDeleteHistoricalFeria(id); }} />}
+              {view === 'history' && <FeriaHistoryList activeFeriaConfig={activeFeriaConfig} feriaHistory={feriaHistory} onActivateFeria={onActivateHistoricalFeria} onShowReport={(f) => { playUiClick(); setSelectedHistoricalFeria(f); setShowHistoricalReportModal(true); }} onDeleteFeria={(id) => { playUiClick(); if(window.confirm('Eliminar?')) onDeleteHistoricalFeria(id); }} />}
             </main>
             
-            {showHistoricalReportModal && selectedHistoricalFeria && <HistoricalFeriaReportModal feria={selectedHistoricalFeria} onClose={() => setShowHistoricalReportModal(false)} />}
+            {showHistoricalReportModal && selectedHistoricalFeria && <HistoricalFeriaReportModal feria={selectedHistoricalFeria} onClose={() => { playUiClick(); setShowHistoricalReportModal(false); }} />}
           </div>
         );
       };
@@ -568,6 +600,7 @@
 
         const handleSubmit = async (e) => {
             e.preventDefault();
+            playUiClick();
             try {
                 await onSave(formData);
                 setFeedback({ msg: 'Guardado correctamente.', isError: false });
@@ -594,7 +627,7 @@
                     </div>
                     <div className="pt-4 flex flex-col md:flex-row gap-4">
                         <button type="submit" className="flex-1 py-3 px-6 bg-primary text-white rounded-md font-bold hover:bg-emerald-600 transition shadow-lg">GUARDAR CAMBIOS</button>
-                        {activeFeriaConfig && <button type="button" onClick={onFinalizeFeria} className="flex-1 py-3 px-6 bg-surfaceDark dark:bg-black border border-gray-600 text-white rounded-md font-bold hover:bg-gray-800 transition">ARCHIVAR FERIA ACTUAL</button>}
+                        {activeFeriaConfig && <button type="button" onClick={() => { playUiClick(); onFinalizeFeria(); }} className="flex-1 py-3 px-6 bg-surfaceDark dark:bg-black border border-gray-600 text-white rounded-md font-bold hover:bg-gray-800 transition">ARCHIVAR FERIA ACTUAL</button>}
                     </div>
                 </form>
             </div>
@@ -606,6 +639,7 @@
         const report = calculateReportSummary(activeFeriaConfig, activeSales);
         
         const handleShare = () => {
+             playUiClick();
              const message = `*Reporte: ${activeFeriaConfig.nombreFeria}*\nTotal: $${report.montoTotalGeneral}`;
              window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
         };
@@ -632,7 +666,7 @@
                 </div>
                 <div className="flex gap-4 pt-4">
                     <button onClick={handleShare} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg shadow transition">WhatsApp</button>
-                    <button onClick={onFinalizeFeria} className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-red-100 hover:text-red-600 text-gray-700 dark:text-gray-200 font-bold py-3 rounded-lg transition">Cerrar Feria</button>
+                    <button onClick={() => { playUiClick(); onFinalizeFeria(); }} className="flex-1 bg-gray-200 dark:bg-gray-700 hover:bg-red-100 hover:text-red-600 text-gray-700 dark:text-gray-200 font-bold py-3 rounded-lg transition">Cerrar Feria</button>
                 </div>
             </div>
         );
@@ -653,7 +687,7 @@
                           <div className="flex gap-2">
                               <button onClick={() => onShowReport(feria)} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md font-bold text-sm hover:bg-blue-200">Ver</button>
                               <button onClick={() => onDeleteFeria(feria.id)} className="px-4 py-2 bg-red-100 text-red-700 rounded-md font-bold text-sm hover:bg-red-200">Borrar</button>
-                              <button onClick={() => { if(window.confirm('Activar esta feria archivará la actual. Continuar?')) onActivateFeria(feria); }} className="px-4 py-2 bg-green-100 text-green-700 rounded-md font-bold text-sm hover:bg-green-200">Reactivar</button>
+                              <button onClick={() => { playUiClick(); if(window.confirm('Activar esta feria archivará la actual. Continuar?')) onActivateFeria(feria); }} className="px-4 py-2 bg-green-100 text-green-700 rounded-md font-bold text-sm hover:bg-green-200">Reactivar</button>
                           </div>
                       </div>
                   ))}
@@ -694,6 +728,7 @@
         }, [feria]);
 
         const handleDownloadPdf = () => {
+            playUiClick();
             const doc = new jsPDF();
             doc.setFontSize(22); doc.setTextColor('#10B981'); doc.text(`${feria.config.nombreFeria}`, 14, 20);
             doc.setFontSize(14); doc.setTextColor('#000'); doc.text(`Total: $${report.montoTotalGeneral}`, 14, 40);
@@ -704,6 +739,7 @@
         };
 
         const handleShare = () => {
+             playUiClick();
              const msg = `*HISTORICO: ${feria.config.nombreFeria}*\nTotal: $${report.montoTotalGeneral}\n(D: $${report.montoTotalDigital} / B: $${report.montoTotalBillete})`;
              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
         };
