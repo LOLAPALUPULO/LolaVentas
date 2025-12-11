@@ -69,6 +69,16 @@
             to { opacity: 1; transform: scale(1); }
         }
 
+        /* Custom float animation for the logo */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        .animate-float {
+            animation: float 3s ease-in-out infinite;
+        }
+
         /* Scrollbar styling for a cleaner look */
         ::-webkit-scrollbar {
             width: 8px;
@@ -148,23 +158,34 @@
       const ADMIN_USER_PASSWORD = 'regis123';
       const SALES_USER_EMAIL = 'cboludas@gmail.com';
       const SALES_USER_PASSWORD = 'lol12345';
+      const LOLA_SVG_URL = 'https://raw.githubusercontent.com/LOLAPALUPULO/LolaVentas/034fef64afa32a2249a8be7284f6b59b63004079/lola.svg';
 
       // --- Audio Service using Tone.js ---
       const audioService = {
           initialized: false,
-          synth: null,
+          clickSynth: null,
+          productSynth: null,
           polySynth: null,
           
           init: async () => {
               if (audioService.initialized) return;
               await Tone.start();
               
-              // Simple synth for UI clicks and beeps
-              audioService.synth = new Tone.Synth({
+              // 1. General UI clicks (softer)
+              // Reduced volume to -20 dB
+              audioService.clickSynth = new Tone.Synth({
                   oscillator: { type: "sine" },
+                  envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.1 }
+              }).toDestination();
+              audioService.clickSynth.volume.value = -20;
+
+              // 2. Product clicks (louder)
+              // Increased relative volume to -5 dB
+              audioService.productSynth = new Tone.Synth({
+                  oscillator: { type: "triangle" },
                   envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
               }).toDestination();
-              audioService.synth.volume.value = -10;
+              audioService.productSynth.volume.value = -5;
 
               // PolySynth for chords (success)
               audioService.polySynth = new Tone.PolySynth(Tone.Synth, {
@@ -178,20 +199,20 @@
 
           playClick: () => {
               if (!audioService.initialized) audioService.init();
-              // Short high tick
-              if (audioService.synth) audioService.synth.triggerAttackRelease("C6", "32n");
+              // Short, soft high tick
+              if (audioService.clickSynth) audioService.clickSynth.triggerAttackRelease("C6", "32n");
           },
 
           playAdd: () => {
               if (!audioService.initialized) audioService.init();
-              // Cheerful ping
-              if (audioService.synth) audioService.synth.triggerAttackRelease("E5", "16n");
+              // Louder cheerful ping
+              if (audioService.productSynth) audioService.productSynth.triggerAttackRelease("E5", "16n");
           },
 
           playSub: () => {
               if (!audioService.initialized) audioService.init();
-              // Lower un-do sound
-              if (audioService.synth) audioService.synth.triggerAttackRelease("C4", "16n");
+              // Louder un-do sound
+              if (audioService.productSynth) audioService.productSynth.triggerAttackRelease("C4", "16n");
           },
 
           playSuccess: () => {
@@ -205,7 +226,7 @@
           playError: () => {
                if (!audioService.initialized) audioService.init();
                // Low dissonant tone
-               if (audioService.synth) audioService.synth.triggerAttackRelease("A2", "8n");
+               if (audioService.productSynth) audioService.productSynth.triggerAttackRelease("A2", "8n");
           }
       };
 
@@ -368,9 +389,12 @@
         return (
           <div className="flex flex-col items-center justify-center min-h-screen w-full bg-lightbg dark:bg-darkbg p-4 transition-colors duration-300">
             <div className="w-full max-w-md animate-fade-in flex flex-col items-center">
-                <div className="mb-10 text-center">
-                    <h1 className="text-6xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-emerald-300 leading-none filter drop-shadow-lg tracking-tighter">LOLA</h1>
-                    <h2 className="text-4xl md:text-5xl font-bold text-gray-700 dark:text-gray-200 mt-2 tracking-widest">VENTAS</h2>
+                <div className="mb-10 text-center flex flex-col items-center">
+                    {/* Replaced LOLA text with SVG */}
+                    <img src={LOLA_SVG_URL} alt="LOLA Logo" className="w-48 h-48 mb-4 animate-float filter drop-shadow-lg" />
+                    
+                    {/* Font Pitched Battle for VENTAS */}
+                    <h2 className="text-6xl md:text-7xl font-display text-gray-700 dark:text-gray-200 mt-2 tracking-widest">VENTAS</h2>
                     <p className="text-primary mt-2 text-xl font-display">(on line)</p>
                 </div>
                 
@@ -516,8 +540,11 @@
             {/* Header */}
             <div className="flex justify-between items-center p-3 bg-white dark:bg-surfaceDark shadow-md z-10">
               <div>
-                  <h1 className="text-lg font-bold text-gray-500 dark:text-gray-400 leading-tight">LOLA <span className="text-primary">VENTAS</span></h1>
-                  <p className="text-2xl md:text-3xl text-gray-800 dark:text-white font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
+                  <div className="flex items-center gap-2">
+                       <img src={LOLA_SVG_URL} alt="Logo" className="h-8 w-8" />
+                       <h1 className="text-2xl font-display text-gray-800 dark:text-white leading-tight">VENTAS</h1>
+                  </div>
+                  <p className="text-xl md:text-2xl text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
               </div>
               <div className="flex items-center gap-3">
                   {!isOnline && <span className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold animate-pulse">OFFLINE ({pendingOrders.length})</span>}
