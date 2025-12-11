@@ -438,6 +438,7 @@
         const [isOnline, setIsOnline] = React.useState(navigator.onLine);
         const [pendingOrders, setPendingOrders] = React.useState([]);
         const [showSuccess, setShowSuccess] = React.useState(false);
+        const [showPendingModal, setShowPendingModal] = React.useState(false);
 
         React.useEffect(() => {
           const storedPending = localStorage.getItem('pendingOrders');
@@ -456,6 +457,7 @@
             if (isOnline && pendingOrders.length > 0) {
                 const syncOrders = async () => {
                     const ordersToSync = [...pendingOrders];
+                    // Keep them pending until confirmed success, but for now we clear
                     setPendingOrders([]); 
                     localStorage.removeItem('pendingOrders');
                     for (const sale of ordersToSync) {
@@ -510,7 +512,7 @@
           
           // Show "CARGADO" animation
           setShowSuccess(true);
-          setTimeout(() => setShowSuccess(false), 1500);
+          setTimeout(() => setShowSuccess(false), 2000);
         };
 
         const handlePintaChange = (delta) => {
@@ -531,9 +533,53 @@
           <div className="flex flex-col min-h-screen bg-lightbg dark:bg-darkbg overflow-hidden relative">
             {/* Success Overlay */}
             {showSuccess && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-surfaceDark border-4 border-primary rounded-full w-64 h-64 flex items-center justify-center shadow-glow-primary transform scale-110">
-                        <span className="text-4xl md:text-5xl font-extrabold text-primary animate-pulse tracking-widest">CARGADO!</span>
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white dark:bg-surfaceDark border-4 border-primary rounded-3xl w-80 h-80 flex flex-col items-center justify-center shadow-glow-primary transform scale-110 p-4 text-center">
+                        {isOnline ? (
+                             <span className="text-4xl md:text-5xl font-extrabold text-primary animate-pulse tracking-widest">CARGADO!</span>
+                        ) : (
+                             <React.Fragment>
+                                <svg className="w-20 h-20 text-secondary mb-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" /></svg>
+                                <span className="text-3xl font-bold text-secondary tracking-widest leading-none mb-2">GUARDADO OFFLINE</span>
+                                <span className="text-lg text-gray-400 font-medium">PENDIENTE DE ENVIO</span>
+                             </React.Fragment>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Pending Orders Modal */}
+            {showPendingModal && (
+                <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in p-4">
+                    <div className="w-full max-w-lg bg-surfaceDark border border-gray-700 rounded-2xl flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                            <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+                                PENDIENTES DE ENVIO
+                            </h3>
+                            <button onClick={() => { audioService.playClick(); setShowPendingModal(false); }} className="text-gray-400 hover:text-white text-2xl">&times;</button>
+                        </div>
+                        <div className="p-4 overflow-y-auto flex-1 space-y-2">
+                            {pendingOrders.length === 0 ? (
+                                <p className="text-gray-500 text-center py-8">No hay ordenes pendientes.</p>
+                            ) : (
+                                pendingOrders.map((order, idx) => (
+                                    <div key={idx} className="bg-gray-800 p-3 rounded-lg flex justify-between items-center border border-gray-700">
+                                        <div>
+                                            <div className="text-primary font-bold text-lg">${order.montoTotal}</div>
+                                            <div className="text-xs text-gray-400">{new Date(order.fechaVenta).toLocaleTimeString()}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-sm font-medium text-white">{order.tipoUnidad} ({order.cantidadUnidades})</div>
+                                            <div className="text-xs text-secondary uppercase">{order.tipoPago}</div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        <div className="p-4 bg-gray-900 rounded-b-2xl border-t border-gray-700">
+                            <button onClick={() => { audioService.playClick(); setShowPendingModal(false); }} className="w-full py-3 bg-gray-700 text-white rounded-xl font-bold">CERRAR</button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -548,7 +594,15 @@
                   <p className="text-xl md:text-2xl text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
               </div>
               <div className="flex items-center gap-3">
-                  {!isOnline && <span className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold animate-pulse">OFFLINE ({pendingOrders.length})</span>}
+                  {!isOnline && (
+                      <button 
+                        onClick={() => { audioService.playClick(); setShowPendingModal(true); }}
+                        className="bg-red-500 text-white text-xs px-3 py-1.5 rounded-full font-bold animate-pulse hover:bg-red-600 transition-colors flex items-center gap-1 shadow-lg"
+                      >
+                        <span className="w-2 h-2 bg-white rounded-full"></span>
+                        OFFLINE ({pendingOrders.length})
+                      </button>
+                  )}
                   <button onClick={() => { audioService.playClick(); onLogout(); }} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                   </button>
@@ -567,7 +621,7 @@
                            <path d="M6 5h12v2H6z" opacity="0.3"/>
                        </svg>
 
-                       <span className="text-3xl md:text-5xl font-bold mb-1">PINTA</span>
+                       <span className="text-3xl md:text-5xl font-display mb-1">PINTA</span>
                        <span className="text-lg opacity-80">${activeFeriaConfig.valorPinta}</span>
                        <div className="mt-4 bg-blue-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
                            <span className="text-6xl md:text-7xl font-extrabold">{pintaCount}</span>
@@ -590,7 +644,7 @@
                           <path d="M21 8h-2v7h2c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2z"/>
                        </svg>
 
-                       <span className="text-3xl md:text-5xl font-bold mb-1">LITRO</span>
+                       <span className="text-3xl md:text-5xl font-display mb-1">LITRO</span>
                        <span className="text-lg opacity-80">${activeFeriaConfig.valorLitro}</span>
                        <div className="mt-4 bg-purple-800/50 rounded-full w-24 h-24 md:w-32 md:h-32 flex items-center justify-center">
                            <span className="text-6xl md:text-7xl font-extrabold">{litroCount}</span>
