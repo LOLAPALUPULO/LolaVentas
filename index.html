@@ -80,6 +80,16 @@
             animation: float 3s ease-in-out infinite;
         }
 
+        /* Pop animation for numbers */
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+        .animate-pop {
+            animation: pop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
         /* Scrollbar styling for a cleaner look */
         ::-webkit-scrollbar {
             width: 8px;
@@ -596,7 +606,8 @@
             <div className="flex justify-between items-center p-3 bg-white dark:bg-surfaceDark shadow-md z-10">
               <div>
                   <div className="flex items-center gap-2">
-                       <img src={LOLA_SVG_URL} alt="Logo" className="h-8 w-8" />
+                       {/* Animated Logo */}
+                       <img src={LOLA_SVG_URL} alt="Logo" className="h-10 w-10 animate-pulse hover:scale-110 transition-transform duration-300" />
                        <h1 className="text-2xl font-display text-gray-800 dark:text-white leading-tight">VENTAS</h1>
                   </div>
                   <p className="text-xl md:text-2xl text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
@@ -632,7 +643,7 @@
                        <span className="text-2xl md:text-5xl font-display mb-0">PINTA</span>
                        <span className="text-base opacity-80">${activeFeriaConfig.valorPinta}</span>
                        <div className="mt-2 bg-blue-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
-                           <span className="text-4xl md:text-7xl font-extrabold">{pintaCount}</span>
+                           <span key={pintaCount} className="text-4xl md:text-7xl font-extrabold animate-pop">{pintaCount}</span>
                        </div>
                    </button>
                    {pintaCount > 0 && (
@@ -655,7 +666,7 @@
                        <span className="text-2xl md:text-5xl font-display mb-0">LITRO</span>
                        <span className="text-base opacity-80">${activeFeriaConfig.valorLitro}</span>
                        <div className="mt-2 bg-purple-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
-                           <span className="text-4xl md:text-7xl font-extrabold">{litroCount}</span>
+                           <span key={litroCount} className="text-4xl md:text-7xl font-extrabold animate-pop">{litroCount}</span>
                        </div>
                    </button>
                    {litroCount > 0 && (
@@ -669,7 +680,7 @@
             {/* Total Display - Condensed */}
             <div className="bg-surfaceDark dark:bg-black p-2 text-center border-t border-gray-700">
                 <span className="text-gray-400 text-sm uppercase tracking-widest block">Total a cobrar</span>
-                <span className={`text-5xl font-bold transition-all ${hasItems ? 'text-primary' : 'text-gray-600'}`}>${total}</span>
+                <span key={total} className={`text-5xl font-bold transition-all animate-pop ${hasItems ? 'text-primary' : 'text-gray-600'}`}>${total}</span>
             </div>
 
             {/* Payment Actions - Stick to bottom */}
