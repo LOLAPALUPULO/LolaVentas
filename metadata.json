@@ -1,5 +1,5 @@
 {
-  "name": "17  LOLA-VENTAS can pintas y litros",
+  "name": "18  LOLA-VENTAS bloqueo al deconectar",
   "description": "A light single-page application for event sales registration, calculating quantities and totals, with admin and sales user roles, active and historical sales reporting, and PDF download capabilities.",
   "requestFramePermissions": []
 }

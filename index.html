@@ -462,8 +462,10 @@
         React.useEffect(() => {
           const storedPending = localStorage.getItem('pendingOrders');
           if (storedPending) setPendingOrders(JSON.parse(storedPending));
+          
           const handleOnline = () => setIsOnline(true);
           const handleOffline = () => setIsOnline(false);
+          
           window.addEventListener('online', handleOnline);
           window.addEventListener('offline', handleOffline);
           return () => {
@@ -476,11 +478,15 @@
             if (isOnline && pendingOrders.length > 0) {
                 const syncOrders = async () => {
                     const ordersToSync = [...pendingOrders];
-                    // Keep them pending until confirmed success, but for now we clear
+                    // IMPORTANT: Clear pending queue immediately to avoid double submissions if API is slow
                     setPendingOrders([]); 
                     localStorage.removeItem('pendingOrders');
+                    
                     for (const sale of ordersToSync) {
-                        try { await apiService.addSale(sale); } catch (e) { console.error(e); }
+                        try { await apiService.addSale(sale); } catch (e) { 
+                             // If it fails again, we could add it back, but for now we assume eventual consistency or user re-entry
+                             console.error("Sync failed for item", e); 
+                        }
                     }
                 };
                 syncOrders();
@@ -519,8 +525,10 @@
             usuarioVenta: auth.currentUser ? auth.currentUser.email : 'offline_user',
           };
 
-          if (isOnline) apiService.addSale(newSale);
-          else {
+          if (isOnline) {
+              apiService.addSale(newSale);
+          } else {
+             // OFFLINE MODE: Save to local queue
              const updatedPending = [...pendingOrders, { ...newSale, id: `temp-${Date.now()}` }];
              setPendingOrders(updatedPending);
              localStorage.setItem('pendingOrders', JSON.stringify(updatedPending));
@@ -566,7 +574,7 @@
                     </div>
                 </div>
             )}
-
+            
             {/* Pending Orders Modal */}
             {showPendingModal && (
                 <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in p-4">
@@ -604,7 +612,7 @@
             )}
 
             {/* Header */}
-            <div className="flex justify-between items-center p-3 bg-white dark:bg-surfaceDark shadow-md z-10">
+            <div className={`flex justify-between items-center p-3 shadow-md z-10 transition-colors duration-300 ${isOnline ? 'bg-white dark:bg-surfaceDark' : 'bg-red-900 border-b-2 border-red-500'}`}>
               <div>
                   <div className="flex items-center gap-2">
                        {/* Animated Logo */}
@@ -614,15 +622,21 @@
                   <p className="text-xl md:text-2xl text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider leading-none mt-1">{activeFeriaConfig.nombreFeria}</p>
               </div>
               <div className="flex items-center gap-3">
-                  {!isOnline && (
+                  {isOnline ? (
+                      <div className="bg-green-500 text-white text-xs px-3 py-1.5 rounded-full font-bold flex items-center gap-1 shadow-lg">
+                        <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                        ONLINE
+                      </div>
+                  ) : (
                       <button 
                         onClick={() => { audioService.playClick(); setShowPendingModal(true); }}
-                        className="bg-red-500 text-white text-xs px-3 py-1.5 rounded-full font-bold animate-pulse hover:bg-red-600 transition-colors flex items-center gap-1 shadow-lg"
+                        className="bg-red-500 text-white text-xs px-3 py-1.5 rounded-full font-bold animate-pulse hover:bg-red-600 transition-colors flex items-center gap-1 shadow-lg border-2 border-white/20"
                       >
                         <span className="w-2 h-2 bg-white rounded-full"></span>
                         OFFLINE ({pendingOrders.length})
                       </button>
                   )}
+                  
                   <button onClick={() => { audioService.playClick(); onLogout(); }} className="p-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-white rounded-lg hover:bg-red-100 hover:text-red-500 transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
                   </button>
