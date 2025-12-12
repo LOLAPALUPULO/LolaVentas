@@ -806,7 +806,12 @@
         
         const handleShare = () => {
              audioService.playClick();
-             const message = `*Reporte: ${activeFeriaConfig.nombreFeria}*\nTotal: $${report.montoTotalGeneral}`;
+             const message = `*REPORTE: ${activeFeriaConfig.nombreFeria}*\n` +
+                             `💰 *Total: $${report.montoTotalGeneral.toLocaleString()}*\n` +
+                             `🍺 Volumen: ${report.totalPintas} P / ${report.totalLitros} L\n` +
+                             `----------------\n` +
+                             `💳 Digital: $${report.montoTotalDigital.toLocaleString()}\n` +
+                             `💵 Efectivo: $${report.montoTotalBillete.toLocaleString()}`;
              window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
         };
 
@@ -814,7 +819,10 @@
             <div className="bg-white dark:bg-surfaceDark shadow rounded-lg p-6 animate-fade-in space-y-6">
                 <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
                     <h3 className="text-2xl font-bold text-primary">{activeFeriaConfig.nombreFeria}</h3>
-                    <p className="text-gray-500">Resumen en tiempo real</p>
+                    <div className="flex justify-between items-end">
+                        <p className="text-gray-500">Resumen en tiempo real</p>
+                        <p className="text-xs text-gray-400 font-bold tracking-widest">{report.totalPintas} PINTAS • {report.totalLitros} LITROS</p>
+                    </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-emerald-50 dark:bg-emerald-900/20 p-6 rounded-xl border border-emerald-100 dark:border-emerald-800">
