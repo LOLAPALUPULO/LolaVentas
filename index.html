@@ -124,7 +124,8 @@
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.1"
+    "react": "https://esm.sh/react@^19.2.1",
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
@@ -279,9 +280,9 @@
         return {
           totalPintas: Math.round(totalPintas),
           totalLitros: Math.round(totalLitros),
-          montoTotalGeneral: parseFloat(montoTotalGeneral.toFixed(2)),
-          montoTotalDigital: parseFloat(montoTotalDigital.toFixed(2)),
-          montoTotalBillete: parseFloat(montoTotalBillete.toFixed(2)),
+          montoTotalGeneral: Math.round(montoTotalGeneral),
+          montoTotalDigital: Math.round(montoTotalDigital),
+          montoTotalBillete: Math.round(montoTotalBillete),
         };
       };
 
@@ -501,7 +502,7 @@
           );
         }
 
-        const calculatePartialTotal = () => (pintaCount * activeFeriaConfig.valorPinta + litroCount * activeFeriaConfig.valorLitro).toFixed(2);
+        const calculatePartialTotal = () => Math.round(pintaCount * activeFeriaConfig.valorPinta + litroCount * activeFeriaConfig.valorLitro);
         const total = calculatePartialTotal();
 
         const handleRegisterSale = async (tipoPago) => {
@@ -641,7 +642,7 @@
                        </svg>
 
                        <span className="text-2xl md:text-5xl font-display mb-0">PINTA</span>
-                       <span className="text-base opacity-80">${activeFeriaConfig.valorPinta}</span>
+                       <span className="text-base opacity-80">${Math.round(activeFeriaConfig.valorPinta)}</span>
                        <div className="mt-2 bg-blue-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
                            <span key={pintaCount} className="text-4xl md:text-7xl font-extrabold animate-pop">{pintaCount}</span>
                        </div>
@@ -664,7 +665,7 @@
                        </svg>
 
                        <span className="text-2xl md:text-5xl font-display mb-0">LITRO</span>
-                       <span className="text-base opacity-80">${activeFeriaConfig.valorLitro}</span>
+                       <span className="text-base opacity-80">${Math.round(activeFeriaConfig.valorLitro)}</span>
                        <div className="mt-2 bg-purple-800/50 rounded-full w-20 h-20 md:w-32 md:h-32 flex items-center justify-center">
                            <span key={litroCount} className="text-4xl md:text-7xl font-extrabold animate-pop">{litroCount}</span>
                        </div>
@@ -787,8 +788,8 @@
                         <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Fin</label><input type="date" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white" value={formData.fechaFin} onChange={e => setFormData({...formData, fechaFin: e.target.value})} /></div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Pinta ($)</label><input type="number" step="0.01" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorPinta} onChange={e => setFormData({...formData, valorPinta: parseFloat(e.target.value)})} /></div>
-                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Litro ($)</label><input type="number" step="0.01" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorLitro} onChange={e => setFormData({...formData, valorLitro: parseFloat(e.target.value)})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Pinta ($)</label><input type="number" step="1" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorPinta} onChange={e => setFormData({...formData, valorPinta: Math.round(parseFloat(e.target.value) || 0)})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor Litro ($)</label><input type="number" step="1" onFocus={() => audioService.playClick()} required className="mt-1 w-full p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md dark:text-white text-lg font-mono" value={formData.valorLitro} onChange={e => setFormData({...formData, valorLitro: Math.round(parseFloat(e.target.value) || 0)})} /></div>
                     </div>
                     <div className="pt-4 flex flex-col md:flex-row gap-4">
                         <button type="submit" className="flex-1 py-3 px-6 bg-primary text-white rounded-md font-bold hover:bg-emerald-600 transition shadow-lg">GUARDAR CAMBIOS</button>
@@ -888,7 +889,7 @@
                         { label: '$ BILLETE', data: labels.map(l => bucketsBillete[l] || 0), borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 3, tension: 0.3 }
                     ]
                 },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => '$' + v } } } }
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => '$' + Math.round(v) } } } }
             });
         }, [feria]);
 
