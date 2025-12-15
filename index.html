@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Tone.js CDN for generative audio -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <!-- Custom Tailwind configuration for immediate use -->
+    <!-- Custom Tailwind configuration -->
     <script>
         tailwind.config = {
             darkMode: 'media', // or 'class'
@@ -149,7 +149,7 @@
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.1",
+    "react": "https://esm.sh/react@^19.2.3",
     "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
@@ -198,13 +198,11 @@
       const ADMIN_ROLE = 'admin';
       const SALES_ROLE = 'sales';
       
-      // CREDENTIALS OBFUSCATED
       const ENC_ADMIN_EMAIL = 'bG9sYXBhbHVwdWxvQGdtYWlsLmNvbQ==';
       const ENC_ADMIN_PASS = 'cmVnaXMxMjM=';
       const ENC_SALES_EMAIL = 'Y2JvbHVkYXNAZ21haWwuY29t';
       const ENC_SALES_PASS = 'bG9sMTIzNDU=';
       
-      // TRIGGER WORDS OBFUSCATED
       const ENC_TRIGGER_ADMIN = 'cmVnaXM='; 
       const ENC_TRIGGER_SALES = 'bG9s';
 
@@ -269,8 +267,6 @@
                if (audioService.productSynth) audioService.productSynth.triggerAttackRelease("A2", "8n");
           }
       };
-
-      const playUiClick = () => audioService.playClick();
 
       const calculateReportSummary = (feriaConfig, sales) => {
         let totalPintas = 0;
@@ -341,7 +337,11 @@
           const existingFeriaQuery = await db.collection('feriaHistory')
             .where('config.nombreFeria', '==', feriaData.config.nombreFeria).limit(1).get();
           let historyRef = existingFeriaQuery.empty ? db.collection('feriaHistory').doc() : existingFeriaQuery.docs[0].ref;
-          batch.set(historyRef, feriaData);
+          
+          // Sanitize data
+          const cleanData = JSON.parse(JSON.stringify(feriaData));
+          batch.set(historyRef, cleanData);
+
           const activeFeriaRef = db.collection('settings').doc('activeFeria');
           batch.update(activeFeriaRef, {
             nombreFeria: firebase.firestore.FieldValue.delete(),
@@ -350,8 +350,15 @@
             valorPinta: firebase.firestore.FieldValue.delete(),
             valorLitro: firebase.firestore.FieldValue.delete(),
           });
+          
+          // Batch delete with chunking
           const activeSalesSnapshot = await db.collection('activeSales').get();
-          activeSalesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+          const BATCH_SIZE = 400;
+          for (let i = 0; i < activeSalesSnapshot.docs.length; i += BATCH_SIZE) {
+              const chunkBatch = db.batch();
+              activeSalesSnapshot.docs.slice(i, i + BATCH_SIZE).forEach(doc => chunkBatch.delete(doc.ref));
+              await chunkBatch.commit();
+          }
           await batch.commit();
           return true;
         },
@@ -367,16 +374,16 @@
                     const currentSales = currentSalesSnap.docs.map(d => ({id: d.id, ...d.data()}));
                     const report = calculateReportSummary(currentConfig, currentSales);
                     
-                    const feriaDataToArchive = { config: currentConfig, sales: currentSales, reportSummary: report, archivedAt: new Date().toISOString() };
+                    const feriaDataToArchive = JSON.parse(JSON.stringify({ config: currentConfig, sales: currentSales, reportSummary: report, archivedAt: new Date().toISOString() }));
                     
                     // Save to history (Single Set)
                     const existingFeriaQuery = await db.collection('feriaHistory').where('config.nombreFeria', '==', currentConfig.nombreFeria).limit(1).get();
                     let historyRef = existingFeriaQuery.empty ? db.collection('feriaHistory').doc() : existingFeriaQuery.docs[0].ref;
                     await historyRef.set(feriaDataToArchive);
 
-                    // Delete current sales in CHUNKS of 500 to avoid batch limits
+                    // Delete current sales in CHUNKS of 400 to avoid batch limits
                     const deleteDocs = currentSalesSnap.docs;
-                    const BATCH_SIZE = 500;
+                    const BATCH_SIZE = 400;
                     for (let i = 0; i < deleteDocs.length; i += BATCH_SIZE) {
                         const batch = db.batch();
                         deleteDocs.slice(i, i + BATCH_SIZE).forEach(doc => batch.delete(doc.ref));
@@ -386,7 +393,7 @@
                      // Clean up orphans if no active feria
                      const orphanSales = await db.collection('activeSales').get();
                      const deleteDocs = orphanSales.docs;
-                     const BATCH_SIZE = 500;
+                     const BATCH_SIZE = 400;
                      for (let i = 0; i < deleteDocs.length; i += BATCH_SIZE) {
                         const batch = db.batch();
                         deleteDocs.slice(i, i + BATCH_SIZE).forEach(doc => batch.delete(doc.ref));
@@ -395,11 +402,12 @@
                 }
 
                 // 3. Set new active config
-                await db.collection('settings').doc('activeFeria').set(feriaToActivate.config);
+                const cleanConfig = JSON.parse(JSON.stringify(feriaToActivate.config));
+                await db.collection('settings').doc('activeFeria').set(cleanConfig);
 
-                // 4. Restore sales in CHUNKS of 500
+                // 4. Restore sales in CHUNKS of 400
                 const salesToRestore = feriaToActivate.sales || [];
-                const BATCH_SIZE = 500;
+                const BATCH_SIZE = 400;
                 for (let i = 0; i < salesToRestore.length; i += BATCH_SIZE) {
                     const batch = db.batch();
                     salesToRestore.slice(i, i + BATCH_SIZE).forEach(sale => {
@@ -968,51 +976,69 @@
       const HistoricalFeriaReportModal = ({ feria, onClose }) => {
         const report = calculateReportSummary(feria.config, feria.sales);
         const { jsPDF } = window.jspdf;
-        const canvasRef = React.useRef(null);
 
-        React.useEffect(() => {
-            if (feria.sales.length === 0 || !canvasRef.current) return;
-            const sortedSales = [...feria.sales].sort((a, b) => new Date(a.fechaVenta) - new Date(b.fechaVenta));
-            const bucketsDigital = {}, bucketsBillete = {}, allKeys = new Set();
-            sortedSales.forEach(sale => {
-                const d = new Date(sale.fechaVenta);
-                d.setHours(Math.floor(d.getHours() / 8) * 8, 0, 0, 0);
-                const label = `${d.getDate()}/${d.getMonth()+1} ${d.getHours()}:00`;
-                allKeys.add(label);
-                if (sale.tipoPago === TipoPago.Digital) bucketsDigital[label] = (bucketsDigital[label] || 0) + sale.montoTotal;
-                else bucketsBillete[label] = (bucketsBillete[label] || 0) + sale.montoTotal;
+        const dailyStats = React.useMemo(() => {
+            const stats = {};
+            feria.sales.forEach(sale => {
+                const dateObj = new Date(sale.fechaVenta);
+                const dateKey = dateObj.toLocaleDateString();
+                
+                if (!stats[dateKey]) {
+                    stats[dateKey] = {
+                        date: dateKey,
+                        timestamp: dateObj.setHours(0,0,0,0),
+                        totalMoney: 0,
+                        totalDigital: 0,
+                        totalBillete: 0,
+                        totalPintas: 0,
+                        totalLitros: 0
+                    };
+                }
+                
+                stats[dateKey].totalMoney += sale.montoTotal;
+                if (sale.tipoPago === TipoPago.Digital) {
+                    stats[dateKey].totalDigital += sale.montoTotal;
+                } else {
+                    stats[dateKey].totalBillete += sale.montoTotal;
+                }
+                
+                if (sale.tipoUnidad === TipoUnidad.Pinta) {
+                    stats[dateKey].totalPintas += sale.cantidadUnidades;
+                } else if (sale.tipoUnidad === TipoUnidad.Litro) {
+                    stats[dateKey].totalLitros += sale.cantidadUnidades;
+                } else if (sale.tipoUnidad === TipoUnidad.Mixed) {
+                    stats[dateKey].totalPintas += sale.cantidadUnidades / 2;
+                    stats[dateKey].totalLitros += sale.cantidadUnidades / 2;
+                }
             });
-            const labels = Array.from(allKeys);
-            new Chart(canvasRef.current.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: '$ DIGITAL', data: labels.map(l => bucketsDigital[l] || 0), borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.1)', borderWidth: 3, tension: 0.3, pointRadius: 4, pointHoverRadius: 6 },
-                        { label: '$ BILLETE', data: labels.map(l => bucketsBillete[l] || 0), borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 3, tension: 0.3, pointRadius: 4, pointHoverRadius: 6 }
-                    ]
-                },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => '$' + Math.round(v) } } } }
-            });
-        }, [feria]);
+            return Object.values(stats).sort((a, b) => a.timestamp - b.timestamp);
+        }, [feria.sales]);
 
         const handleDownloadPdf = () => {
             audioService.playClick();
             const doc = new jsPDF();
             doc.setFontSize(22); doc.setTextColor('#10B981'); doc.text(`${feria.config.nombreFeria}`, 14, 20);
-            doc.setFontSize(14); doc.setTextColor('#000'); doc.text(`Total: $${report.montoTotalGeneral}`, 14, 40);
-            doc.text(`Digital: $${report.montoTotalDigital} | Billete: $${report.montoTotalBillete}`, 14, 50);
-            doc.text(`Volumen: ${report.totalPintas} P / ${report.totalLitros} L`, 14, 60);
-            if (canvasRef.current) {
-                const imgData = canvasRef.current.toDataURL('image/png');
-                doc.addImage(imgData, 'PNG', 14, 70, 180, 80);
-            }
+            doc.setFontSize(14); doc.setTextColor('#000'); doc.text(`Total: $${report.montoTotalGeneral.toLocaleString()}`, 14, 40);
+            doc.setFontSize(10); 
+            doc.text(`Digital: $${report.montoTotalDigital.toLocaleString()} | Billete: $${report.montoTotalBillete.toLocaleString()}`, 14, 48);
+            doc.text(`Volumen: ${report.totalPintas} P / ${report.totalLitros} L`, 14, 56);
+            
+            const rows = dailyStats.map(d => [d.date, `$${d.totalMoney.toLocaleString()}`, `$${d.totalDigital.toLocaleString()}`, `$${d.totalBillete.toLocaleString()}`, Math.round(d.totalPintas), Math.round(d.totalLitros)]);
+            
+            doc.autoTable({ 
+                startY: 65, 
+                head: [['Fecha', 'Total', '$ Dig', '$ Efe', 'P', 'L']], 
+                body: rows, 
+                theme: 'striped', 
+                headStyles: { fillColor: [16, 185, 129] },
+                styles: { fontSize: 8 }
+            });
             doc.save(`Reporte_${feria.config.nombreFeria}.pdf`);
         };
 
         const handleShare = () => {
              audioService.playClick();
-             const msg = `*HISTORICO: ${feria.config.nombreFeria}*\nTotal: $${report.montoTotalGeneral}\n(D: $${report.montoTotalDigital} / B: $${report.montoTotalBillete})`;
+             const msg = `*HISTORICO: ${feria.config.nombreFeria}*\nTotal: $${report.montoTotalGeneral.toLocaleString()}\n(D: $${report.montoTotalDigital.toLocaleString()} / B: $${report.montoTotalBillete.toLocaleString()})`;
              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
         };
 
@@ -1034,8 +1060,39 @@
                                 <div className="text-xl font-bold text-gray-700 dark:text-gray-300">{report.totalPintas}P / {report.totalLitros}L</div>
                             </div>
                         </div>
-                        <div className="h-64 w-full bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm relative">
-                             <canvas ref={canvasRef}></canvas>
+                        
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+                             <div className="overflow-x-auto">
+                                 <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                                     <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                                         <tr>
+                                             <th className="px-6 py-3">Fecha</th>
+                                             <th className="px-6 py-3 text-center">Cant.</th>
+                                             <th className="px-6 py-3 text-right">Total</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {dailyStats.map((day, i) => (
+                                             <tr key={i} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                                                 <td className="px-6 py-4 font-medium text-gray-900 dark:text-white whitespace-nowrap">
+                                                     {day.date}
+                                                     <div className="text-[10px] text-gray-400 uppercase font-bold mt-1">
+                                                        <span className="text-blue-500">D: ${day.totalDigital.toLocaleString()}</span> • <span className="text-green-500">E: ${day.totalBillete.toLocaleString()}</span>
+                                                     </div>
+                                                 </td>
+                                                 <td className="px-6 py-4 text-center">
+                                                     <div className="font-bold text-gray-700 dark:text-gray-300">
+                                                         {Math.round(day.totalPintas)} P / {Math.round(day.totalLitros)} L
+                                                     </div>
+                                                 </td>
+                                                 <td className="px-6 py-4 text-right font-black text-gray-900 dark:text-white">
+                                                     ${day.totalMoney.toLocaleString()}
+                                                 </td>
+                                             </tr>
+                                         ))}
+                                     </tbody>
+                                 </table>
+                             </div>
                         </div>
                     </div>
                     <div className="p-6 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex gap-4">
